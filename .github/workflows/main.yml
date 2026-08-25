@@ -26,7 +26,7 @@ jobs:
           python -m pip install --disable-pip-version-check -q -U yt-dlp
 
       - name: Read and publish wind
-        run: python generate.py
+        run: python generate_cloud.py
 
       - name: Save latest reading
         run: |
