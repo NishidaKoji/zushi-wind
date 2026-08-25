@@ -39,7 +39,11 @@ def load_last():
         return {}
 
 def grab_frame():
-    out = run(["yt-dlp", "-g", "-f", "best*", "--no-warnings", VIDEO_URL], 60).stdout.decode().splitlines()
+    out = run([
+        "yt-dlp", "--js-runtimes", "node",
+        "--extractor-args", "youtube:player_client=tv",
+        "-g", "-f", "best*", "--no-warnings", VIDEO_URL,
+    ], 60).stdout.decode().splitlines()
     if not out:
         raise RuntimeError("YouTubeライブURLを取得できません")
     tmp = FRAME.with_suffix(".new.jpg")
@@ -164,4 +168,3 @@ def sample():
             "direction_code": direction_code, "debug": debug}
     atomic_json(LAST, data)
     return data
-
