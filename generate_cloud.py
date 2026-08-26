@@ -79,8 +79,13 @@ import zushi_wind_cloud as zushi_wind
 
 
 def resolve_youtube_stream(deno):
+    cookie_file = os.environ.get("YOUTUBE_COOKIES_FILE")
+    if not cookie_file or not Path(cookie_file).is_file():
+        raise RuntimeError("GitHub Secret YOUTUBE_COOKIES_B64 が未設定です")
     common = [
         "yt-dlp",
+        "--cookies",
+        cookie_file,
         "--js-runtimes",
         f"deno:{deno}",
         "--remote-components",
@@ -93,6 +98,7 @@ def resolve_youtube_stream(deno):
         "best*[height<=720]/best*",
     ]
     attempts = [
+        "youtube:player_client=default,mweb",
         "youtube:player_client=default,android;formats=missing_pot",
         "youtube:player_client=tv",
         "youtube:player_client=tv_downgraded",
