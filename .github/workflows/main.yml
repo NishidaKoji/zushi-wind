@@ -15,7 +15,7 @@ concurrency:
 jobs:
   update:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 8
     steps:
       - uses: actions/checkout@v4
 
@@ -23,10 +23,19 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq ffmpeg tesseract-ocr
-          python -m pip install --disable-pip-version-check -q -U yt-dlp
 
       - name: Read and publish wind
-        run: python generate_cloud.py
+        env:
+          YOUTUBE_COOKIES_B64: ${{ secrets.YOUTUBE_COOKIES_B64 }}
+        run: |
+          if [ -z "$YOUTUBE_COOKIES_B64" ]; then
+            echo "YOUTUBE_COOKIES_B64 secret is not configured" >&2
+            exit 1
+          fi
+          COOKIE_FILE="$RUNNER_TEMP/youtube-cookies.txt"
+          printf '%s' "$YOUTUBE_COOKIES_B64" | base64 --decode > "$COOKIE_FILE"
+          chmod 600 "$COOKIE_FILE"
+          YOUTUBE_COOKIES_FILE="$COOKIE_FILE" python generate_cloud.py
 
       - name: Save latest reading
         run: |
