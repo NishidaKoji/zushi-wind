@@ -113,17 +113,31 @@ def resolve_youtube_stream(deno):
             errors.append(f"{extractor_args}: {exc}")
 
     # Anonymous mirror fallback. No account cookies or credentials are used.
+    # Current public instances listed by the Piped project.  Instances come
+    # and go, so try the whole list instead of depending on three hosts.
     for base in (
         "https://pipedapi.kavin.rocks",
         "https://pipedapi.leptons.xyz",
         "https://pipedapi.nosebs.ru",
+        "https://pipedapi-libre.kavin.rocks",
+        "https://piped-api.privacy.com.de",
+        "https://pipedapi.adminforge.de",
+        "https://api.piped.yt",
+        "https://pipedapi.drgns.space",
+        "https://pipedapi.owo.si",
+        "https://pipedapi.ducks.party",
+        "https://piped-api.codespace.cz",
+        "https://pipedapi.reallyaweso.me",
+        "https://api.piped.private.coffee",
+        "https://pipedapi.darkness.services",
+        "https://pipedapi.orangenet.cc",
     ):
         try:
             request = urllib.request.Request(
                 f"{base}/streams/41UP1WsRBKw",
                 headers={"User-Agent": "zushi-wind/2"},
             )
-            with urllib.request.urlopen(request, timeout=35) as response:
+            with urllib.request.urlopen(request, timeout=18) as response:
                 info = json.load(response)
             if info.get("hls"):
                 return info["hls"]
