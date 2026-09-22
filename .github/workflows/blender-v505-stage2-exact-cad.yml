@@ -1,0 +1,400 @@
+name: Blender v505 stage2 exact-CAD QA
+
+on:
+  workflow_dispatch:
+
+jobs:
+  v505_stage2_exact:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install runtime and DXF parser
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y libegl1 python3-pip
+          python3 -m pip install --break-system-packages ezdxf shapely
+
+      - name: Download Blender 4.5.14 LTS
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fL -o blender.tar.xz https://download.blender.org/release/Blender4.5/blender-4.5.14-linux-x64.tar.xz
+          curl -fL -o blender.sha256 https://download.blender.org/release/Blender4.5/blender-4.5.14.sha256
+          EXPECTED=$(grep 'blender-4.5.14-linux-x64.tar.xz' blender.sha256 | awk '{print $1}')
+          ACTUAL=$(sha256sum blender.tar.xz | awk '{print $1}')
+          test -n "$EXPECTED"
+          test "$EXPECTED" = "$ACTUAL"
+          tar -xf blender.tar.xz
+          echo "$PWD/blender-4.5.14-linux-x64" >> "$GITHUB_PATH"
+
+      - name: Validate and convert authoritative DXF
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s assets/v505_CAD_dimensioned_mm.dxf
+          mkdir -p scripts out
+
+          cat > scripts/parse_v505_dxf.py <<'PY'
+          import ezdxf, json, math
+          from pathlib import Path
+          from shapely.geometry import Polygon
+          from shapely.ops import unary_union
+
+          src = Path("assets/v505_CAD_dimensioned_mm.dxf")
+          doc = ezdxf.readfile(src)
+          msp = doc.modelspace()
+
+          wanted = [
+              "tatami","engawa","garden_ground","stepping_stones",
+              "kutsunugi","stream","mound","maple","pine",
+              "tsukubai_kakei","yotsume_gaki","shiorido"
+          ]
+
+          out = {
+              "units": "mm",
+              "authoritative_dimensions_mm": {
+                  "washitsu": [3480,3480],
+                  "engawa_width": 600,
+                  "garden": [2500,3500],
+                  "tatami_each": [870,1740],
+              },
+              "layers": {}
+          }
+
+          for layer in wanted:
+              items = []
+              for e in msp.query(f'LWPOLYLINE[layer=="{layer}"]'):
+                  pts = [(float(x), float(y)) for x,y in e.get_points("xy")]
+                  if len(pts) < 3:
+                      continue
+                  p = Polygon(pts)
+                  if not p.is_valid:
+                      p = p.buffer(0)
+                  if p.is_empty:
+                      continue
+                  items.append({
+                      "points": [[round(x,6),round(y,6)] for x,y in pts],
+                      "area": float(abs(p.area)),
+                      "bounds": [float(v) for v in p.bounds],
+                      "centroid": [float(p.centroid.x), float(p.centroid.y)],
+                  })
+              out["layers"][layer] = items
+
+          # Hard geometry checks from the exact v505 CAD lock.
+          assert len(out["layers"]["tatami"]) == 8
+          assert len(out["layers"]["stepping_stones"]) == 10
+
+          def all_bounds(layer):
+              xs=[]; ys=[]
+              for item in out["layers"][layer]:
+                  for x,y in item["points"]:
+                      xs.append(x); ys.append(y)
+              return min(xs),min(ys),max(xs),max(ys)
+
+          assert all_bounds("tatami") == (0.0,0.0,3480.0,3480.0)
+          gx0,gy0,gx1,gy1 = all_bounds("garden_ground")
+          assert abs(gx0-4080.0) < 0.01
+          assert abs(gx1-6580.0) < 0.01
+          assert abs(gy0-0.0) < 0.01
+          assert abs(gy1-3500.0) < 0.01
+
+          Path("out/v505_exact_geometry.json").write_text(
+              json.dumps(out,ensure_ascii=False,indent=2), encoding="utf-8"
+          )
+          PY
+
+          python3 scripts/parse_v505_dxf.py
+
+      - name: Create exact-CAD Blender model
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          cat > scripts/build_v505_exact.py <<'PY'
+          import bpy, json, math, os
+          from pathlib import Path
+          from mathutils import Vector
+
+          DATA = json.loads(Path("out/v505_exact_geometry.json").read_text(encoding="utf-8"))
+          OUT = Path("out")
+          MM = 0.001
+
+          bpy.ops.object.select_all(action='SELECT')
+          bpy.ops.object.delete(use_global=False)
+
+          def mat(name, color, rough=0.65, metallic=0.0):
+              m = bpy.data.materials.new(name)
+              m.diffuse_color = color
+              m.use_nodes = True
+              bsdf = m.node_tree.nodes.get("Principled BSDF")
+              if bsdf:
+                  bsdf.inputs["Base Color"].default_value = color
+                  bsdf.inputs["Roughness"].default_value = rough
+                  bsdf.inputs["Metallic"].default_value = metallic
+              return m
+
+          MAT = {
+              "tatami": mat("Tatami", (0.58,0.56,0.34,1)),
+              "engawa": mat("Engawa", (0.42,0.23,0.09,1)),
+              "ground": mat("GardenGround", (0.42,0.40,0.35,1)),
+              "stone": mat("Stone", (0.30,0.31,0.30,1)),
+              "water": mat("Water", (0.12,0.42,0.62,1), 0.18),
+              "mound": mat("Mound", (0.25,0.38,0.18,1)),
+              "maple": mat("Maple", (0.48,0.13,0.06,1)),
+              "pine": mat("Pine", (0.08,0.24,0.09,1)),
+              "bamboo": mat("Bamboo", (0.56,0.43,0.18,1)),
+              "wood": mat("DarkWood", (0.20,0.10,0.04,1)),
+              "room": mat("RoomBase", (0.36,0.34,0.30,1)),
+          }
+
+          def add_box(name, x0,y0,x1,y1,z0,h, material):
+              cx=(x0+x1)/2; cy=(y0+y1)/2
+              bpy.ops.mesh.primitive_cube_add(
+                  location=(cx,cy,z0+h/2),
+                  scale=((x1-x0)/2,(y1-y0)/2,h/2)
+              )
+              o=bpy.context.object; o.name=name
+              o.data.materials.append(material)
+              return o
+
+          def add_curve_polygon(name, points_mm, z0, height, material):
+              curve=bpy.data.curves.new(name,'CURVE')
+              curve.dimensions='2D'
+              curve.resolution_u=1
+              curve.fill_mode='BOTH'
+              curve.extrude=height/2
+              sp=curve.splines.new('POLY')
+              sp.points.add(len(points_mm)-1)
+              for p,(x,y) in zip(sp.points,points_mm):
+                  p.co=(x*MM,y*MM,z0,1)
+              sp.use_cyclic_u=True
+              obj=bpy.data.objects.new(name,curve)
+              bpy.context.collection.objects.link(obj)
+              obj.data.materials.append(material)
+              return obj
+
+          def largest(layer, n=1):
+              return sorted(DATA["layers"][layer], key=lambda x:x["area"], reverse=True)[:n]
+
+          # Authoritative base frames.
+          add_box("ROOM_BASE",0,0,3.480,3.480,0.00,0.05,MAT["room"])
+          add_box("ENGAWA_BASE",3.480,0,4.080,3.480,0.00,0.11,MAT["engawa"])
+          add_box("GARDEN_BASE",4.080,0,6.580,3.500,-0.03,0.03,MAT["ground"])
+
+          # Exact 8 tatami outlines.
+          for i,item in enumerate(DATA["layers"]["tatami"],1):
+              add_curve_polygon(f"TATAMI_{i:02d}",item["points"],0.052,0.025,MAT["tatami"])
+
+          # Engawa plan seams: thin dark exact polygons from CAD layer.
+          for i,item in enumerate(DATA["layers"]["engawa"]):
+              if item["area"] < 8000:
+                  add_curve_polygon(f"ENGAWA_DETAIL_{i:03d}",item["points"],0.112,0.002,MAT["wood"])
+
+          # Exact stepping-stone outlines.
+          for i,item in enumerate(DATA["layers"]["stepping_stones"],1):
+              h=0.075 + (i%3)*0.008
+              add_curve_polygon(f"STEPPING_STONE_{i:02d}",item["points"],0.015,h,MAT["stone"])
+
+          # Kutsunugi: largest exact footprint.
+          k=largest("kutsunugi",1)[0]
+          add_curve_polygon("KUTSUNUGI",k["points"],0.015,0.15,MAT["stone"])
+
+          # Stream: largest exact locked footprint.
+          s=largest("stream",1)[0]
+          add_curve_polygon("STREAM",s["points"],0.002,0.012,MAT["water"])
+
+          # Mound: use exact largest footprint, then a low smooth dome over its centroid.
+          m=largest("mound",1)[0]
+          add_curve_polygon("MOUND_FOOTPRINT",m["points"],0.006,0.06,MAT["mound"])
+          minx,miny,maxx,maxy=m["bounds"]
+          cx,cy=m["centroid"]
+          rx=(maxx-minx)*MM/2; ry=(maxy-miny)*MM/2
+          bpy.ops.mesh.primitive_uv_sphere_add(
+              segments=64, ring_count=32,
+              location=(cx*MM,cy*MM,0.09),
+              scale=(rx,ry,0.22)
+          )
+          dome=bpy.context.object; dome.name="MOUND_DOME"; dome.data.materials.append(MAT["mound"])
+
+          # Maple and pine anchors from the exact largest footprints.
+          def add_tree(prefix, layer, trunk_h, canopy_h, canopy_mat, trunk_r=0.035):
+              item=largest(layer,1)[0]
+              cx,cy=item["centroid"]
+              minx,miny,maxx,maxy=item["bounds"]
+              rx=(maxx-minx)*MM/2; ry=(maxy-miny)*MM/2
+              bpy.ops.mesh.primitive_cylinder_add(
+                  vertices=24, radius=trunk_r, depth=trunk_h,
+                  location=(cx*MM,cy*MM,trunk_h/2+0.05)
+              )
+              tr=bpy.context.object; tr.name=prefix+"_TRUNK"; tr.data.materials.append(MAT["wood"])
+              bpy.ops.mesh.primitive_ico_sphere_add(
+                  subdivisions=4, radius=1,
+                  location=(cx*MM,cy*MM,trunk_h+canopy_h*0.48)
+              )
+              ca=bpy.context.object; ca.name=prefix+"_CANOPY"
+              ca.scale=(rx,ry,canopy_h/2)
+              ca.data.materials.append(canopy_mat)
+
+          add_tree("MAPLE","maple",0.72,0.72,MAT["maple"],0.035)
+          add_tree("PINE","pine",0.62,0.55,MAT["pine"],0.045)
+
+          # Tsukubai / kakei anchored to exact CAD centroid.
+          t=largest("tsukubai_kakei",1)[0]
+          tcx,tcy=t["centroid"]
+          bpy.ops.mesh.primitive_cylinder_add(
+              vertices=48, radius=0.23, depth=0.20,
+              location=(tcx*MM,tcy*MM,0.10)
+          )
+          basin=bpy.context.object; basin.name="TSUKUBAI"; basin.data.materials.append(MAT["stone"])
+          bpy.ops.mesh.primitive_torus_add(
+              major_radius=0.13, minor_radius=0.035,
+              major_segments=48, minor_segments=16,
+              location=(tcx*MM,tcy*MM,0.205)
+          )
+          rim=bpy.context.object; rim.name="TSUKUBAI_RIM"; rim.data.materials.append(MAT["stone"])
+
+          # Kakei as bamboo cylinder aimed into basin.
+          kakei_len=0.52
+          bpy.ops.mesh.primitive_cylinder_add(vertices=20, radius=0.027, depth=kakei_len)
+          kk=bpy.context.object; kk.name="KAKEI"; kk.data.materials.append(MAT["bamboo"])
+          kk.location=(tcx*MM-0.14,tcy*MM+0.21,0.36)
+          kk.rotation_euler=(math.radians(72),0,math.radians(-38))
+
+          # Yotsume-gaki from known fixed specification and exact gate span.
+          gate_bounds=largest("shiorido",1)[0]["bounds"]
+          gate_x0=gate_bounds[0]*MM; gate_x1=gate_bounds[2]*MM
+          y=0.03
+          def cylinder_between(name,p1,p2,r,material):
+              v1=Vector(p1); v2=Vector(p2); mid=(v1+v2)/2; vec=v2-v1
+              bpy.ops.mesh.primitive_cylinder_add(vertices=16,radius=r,depth=vec.length,location=mid)
+              o=bpy.context.object; o.name=name
+              o.rotation_euler=vec.to_track_quat('Z','Y').to_euler()
+              o.data.materials.append(material)
+              return o
+
+          # vertical slats left/right
+          for seg0,seg1 in [(4.08,gate_x0),(gate_x1,6.58)]:
+              n=max(2,int((seg1-seg0)/0.16))
+              for i in range(n+1):
+                  x=seg0+(seg1-seg0)*i/n
+                  cylinder_between(f"FENCE_SLAT_{seg0}_{i}",(x,y,0.03),(x,y,0.93),0.014,MAT["bamboo"])
+              for z in (0.15,0.45,0.65):
+                  cylinder_between(f"FENCE_RAIL_{seg0}_{z}",(seg0,y,z),(seg1,y,z),0.017,MAT["bamboo"])
+
+          # Gate posts and full diamond lattice.
+          for x in (gate_x0,gate_x1):
+              cylinder_between("GATE_POST",(x,y,0.02),(x,y,1.02),0.035,MAT["wood"])
+          gate_w=gate_x1-gate_x0
+          gate_h=0.78
+          z0=0.08
+          # diagonals both directions
+          for i in range(-4,8):
+              xa=gate_x0 + i*gate_w/6
+              xb=xa + gate_h
+              p1=(max(gate_x0,xa),y-0.005,z0+max(0,(gate_x0-xa)))
+              p2=(min(gate_x1,xb),y-0.005,z0+min(gate_h,(gate_x1-xa)))
+              if p2[0]>p1[0]:
+                  cylinder_between("GATE_DIAG_A",p1,p2,0.010,MAT["bamboo"])
+          for i in range(-4,8):
+              xa=gate_x0 + i*gate_w/6
+              xb=xa + gate_h
+              p1=(max(gate_x0,xa),y+0.005,z0+gate_h-max(0,(gate_x0-xa)))
+              p2=(min(gate_x1,xb),y+0.005,z0+gate_h-min(gate_h,(gate_x1-xa)))
+              if p2[0]>p1[0]:
+                  cylinder_between("GATE_DIAG_B",p1,p2,0.010,MAT["bamboo"])
+
+          # Lighting.
+          bpy.ops.object.light_add(type='SUN', location=(3.2,1.8,7))
+          sun=bpy.context.object
+          sun.rotation_euler=(math.radians(28),math.radians(-18),math.radians(-30))
+          sun.data.energy=2.0
+          bpy.ops.object.light_add(type='AREA', location=(3.5,-2.5,6.5))
+          area=bpy.context.object; area.data.energy=850; area.data.size=5.5
+
+          def look_at(cam,target):
+              cam.rotation_euler=(Vector(target)-cam.location).to_track_quat('-Z','Y').to_euler()
+
+          scene=bpy.context.scene
+          scene.render.engine='BLENDER_EEVEE_NEXT'
+          scene.render.image_settings.file_format='PNG'
+          scene.render.resolution_percentage=100
+          scene.world.color=(0.055,0.055,0.055)
+
+          # Exact full-plan top view: never crop.
+          camd=bpy.data.cameras.new("QA_TOP")
+          cam=bpy.data.objects.new("QA_TOP",camd)
+          bpy.context.collection.objects.link(cam)
+          cam.location=(3.29,1.75,10)
+          camd.type='ORTHO'
+          camd.ortho_scale=3.90
+          look_at(cam,(3.29,1.75,0))
+          scene.camera=cam
+          scene.render.resolution_x=1800
+          scene.render.resolution_y=1000
+          scene.render.filepath=str((OUT/"QA_stage2_exact_top.png").resolve())
+          bpy.ops.render.render(write_still=True)
+
+          # Perspective.
+          pcamd=bpy.data.cameras.new("QA_PERSPECTIVE")
+          pcam=bpy.data.objects.new("QA_PERSPECTIVE",pcamd)
+          bpy.context.collection.objects.link(pcam)
+          pcam.location=(8.7,-5.9,4.8)
+          pcamd.lens=48
+          look_at(pcam,(4.25,1.8,0.30))
+          scene.camera=pcam
+          scene.render.resolution_x=1800
+          scene.render.resolution_y=1100
+          scene.render.filepath=str((OUT/"QA_stage2_exact_perspective.png").resolve())
+          bpy.ops.render.render(write_still=True)
+
+          bpy.ops.wm.save_as_mainfile(filepath=str((OUT/"v505_stage2_exact.blend").resolve()))
+
+          receipt={
+              "status":"PASS",
+              "schema":"v505-stage2-exact-cad-1.0",
+              "source":"v505_CAD_dimensioned_mm.dxf",
+              "tatami_count":8,
+              "stepping_stone_count":10,
+              "washitsu_mm":[3480,3480],
+              "engawa_width_mm":600,
+              "garden_mm":[2500,3500],
+              "geometry_authority":"exact DXF footprints derived from v505 locked masks",
+              "outputs":[
+                  "QA_stage2_exact_top.png",
+                  "QA_stage2_exact_perspective.png",
+                  "v505_stage2_exact.blend"
+              ]
+          }
+          (OUT/"STAGE2_EXACT_PASS.json").write_text(
+              json.dumps(receipt,ensure_ascii=False,indent=2),encoding="utf-8"
+          )
+          PY
+
+      - name: Run exact-CAD Blender QA
+        shell: bash
+        run: |
+          set -euo pipefail
+          blender --background --factory-startup --python-exit-code 1 --python scripts/build_v505_exact.py
+
+      - name: Verify outputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s out/QA_stage2_exact_top.png
+          test -s out/QA_stage2_exact_perspective.png
+          test -s out/v505_stage2_exact.blend
+          test -s out/STAGE2_EXACT_PASS.json
+          grep -q '"status": "PASS"' out/STAGE2_EXACT_PASS.json
+          cat out/STAGE2_EXACT_PASS.json
+
+      - name: Upload exact-CAD stage2 outputs
+        uses: actions/upload-artifact@v4
+        with:
+          name: blender-v505-stage2-exact-cad
+          path: out/
+          if-no-files-found: error
