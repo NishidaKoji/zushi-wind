@@ -1,0 +1,151 @@
+name: Blender dual-camera smoke test
+
+on:
+  workflow_dispatch:
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Download Blender 4.5.14 LTS
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fL -o blender.tar.xz https://download.blender.org/release/Blender4.5/blender-4.5.14-linux-x64.tar.xz
+          curl -fL -o blender.sha256 https://download.blender.org/release/Blender4.5/blender-4.5.14.sha256
+          EXPECTED=$(grep 'blender-4.5.14-linux-x64.tar.xz' blender.sha256 | awk '{print $1}')
+          ACTUAL=$(sha256sum blender.tar.xz | awk '{print $1}')
+          test -n "$EXPECTED"
+          test "$EXPECTED" = "$ACTUAL"
+          tar -xf blender.tar.xz
+          echo "$PWD/blender-4.5.14-linux-x64" >> "$GITHUB_PATH"
+
+      - name: Create smoke-test scene script
+        shell: bash
+        run: |
+          cat > smoke_test.py <<'PY'
+          import bpy, math, json, os
+          from mathutils import Vector
+
+          bpy.ops.object.select_all(action='SELECT')
+          bpy.ops.object.delete(use_global=False)
+
+          def mat(name, rgba):
+              m = bpy.data.materials.new(name)
+              m.diffuse_color = rgba
+              return m
+
+          m_floor = mat('Floor', (0.22,0.30,0.18,1))
+          m_room = mat('Room', (0.62,0.55,0.36,1))
+          m_stone = mat('Stone', (0.32,0.33,0.31,1))
+
+          bpy.ops.mesh.primitive_cube_add(location=(0,0,-0.05), scale=(4.0,3.0,0.05))
+          floor = bpy.context.object
+          floor.name='Ground'
+          floor.data.materials.append(m_floor)
+
+          bpy.ops.mesh.primitive_cube_add(location=(-2.2,0,0.12), scale=(1.5,2.4,0.12))
+          room = bpy.context.object
+          room.name='RoomBlock'
+          room.data.materials.append(m_room)
+
+          for i,(x,y) in enumerate([(0.0,-1.6),(0.35,-1.0),(0.1,-0.35),(0.45,0.25),(0.2,0.9),(0.6,1.45)]):
+              bpy.ops.mesh.primitive_uv_sphere_add(
+                  segments=48,
+                  ring_count=24,
+                  location=(x,y,0.08),
+                  scale=(0.25+0.03*(i%2),0.18+0.02*((i+1)%2),0.08)
+              )
+              o=bpy.context.object
+              o.name=f'Stone_{i+1}'
+              o.data.materials.append(m_stone)
+
+          bpy.ops.object.light_add(type='SUN', location=(0,0,6))
+          sun=bpy.context.object
+          sun.rotation_euler=(math.radians(25), math.radians(-20), math.radians(-25))
+          sun.data.energy=2.0
+
+          bpy.ops.object.light_add(type='AREA', location=(1.5,-2.5,5.5))
+          area=bpy.context.object
+          area.data.energy=900
+          area.data.shape='DISK'
+          area.data.size=5
+
+          def point_camera(cam, target=(0,0,0)):
+              direction = Vector(target) - cam.location
+              cam.rotation_euler = direction.to_track_quat('-Z','Y').to_euler()
+
+          camdata=bpy.data.cameras.new('QA_ORTHO')
+          qa=bpy.data.objects.new('QA_ORTHO',camdata)
+          bpy.context.collection.objects.link(qa)
+          qa.location=(0,0,10)
+          camdata.type='ORTHO'
+          camdata.ortho_scale=8.0
+          point_camera(qa)
+
+          fdata=bpy.data.cameras.new('FINAL_PERSPECTIVE')
+          final=bpy.data.objects.new('FINAL_PERSPECTIVE',fdata)
+          bpy.context.collection.objects.link(final)
+          final.location=(6.2,-7.8,5.1)
+          fdata.type='PERSP'
+          fdata.lens=47
+          point_camera(final,(-0.4,0,0.25))
+
+          scene=bpy.context.scene
+          scene.render.engine='BLENDER_EEVEE_NEXT'
+          scene.render.resolution_x=1024
+          scene.render.resolution_y=768
+          scene.render.resolution_percentage=100
+          scene.render.image_settings.file_format='PNG'
+          scene.render.film_transparent=False
+          scene.world.color=(0.08,0.08,0.08)
+
+          os.makedirs('out', exist_ok=True)
+
+          scene.camera=qa
+          scene.render.filepath=os.path.abspath('out/QA_ortho.png')
+          bpy.ops.render.render(write_still=True)
+
+          scene.camera=final
+          scene.render.filepath=os.path.abspath('out/FINAL_perspective.png')
+          bpy.ops.render.render(write_still=True)
+
+          receipt={
+              'status':'PASS',
+              'blender_version':bpy.app.version_string,
+              'qa_camera':{'type':qa.data.type,'file':'QA_ortho.png'},
+              'final_camera':{'type':final.data.type,'file':'FINAL_perspective.png'},
+              'resolution':[1024,768]
+          }
+
+          with open('out/SMOKE_PASS_RECEIPT.json','w',encoding='utf-8') as f:
+              json.dump(receipt,f,ensure_ascii=False,indent=2)
+
+          bpy.ops.wm.save_as_mainfile(filepath=os.path.abspath('out/smoke_test.blend'))
+          PY
+
+      - name: Run Blender headless
+        shell: bash
+        run: |
+          set -euo pipefail
+          blender --background --factory-startup --python smoke_test.py
+
+      - name: Verify outputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s out/QA_ortho.png
+          test -s out/FINAL_perspective.png
+          test -s out/SMOKE_PASS_RECEIPT.json
+          grep -q '"status": "PASS"' out/SMOKE_PASS_RECEIPT.json
+          file out/QA_ortho.png
+          file out/FINAL_perspective.png
+          cat out/SMOKE_PASS_RECEIPT.json
+
+      - name: Upload smoke-test outputs
+        uses: actions/upload-artifact@v4
+        with:
+          name: blender-smoke-test-v2
+          path: out/
+          if-no-files-found: error
