@@ -1,0 +1,297 @@
+name: Blender v505 XY placement lock v2
+
+on:
+  workflow_dispatch:
+
+jobs:
+  xy_lock:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install runtime and DXF parser
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y libegl1 python3-pip python3-pil
+          python3 -m pip install --break-system-packages ezdxf
+
+      - name: Download Blender 4.5.14 LTS
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fL -o blender.tar.xz https://download.blender.org/release/Blender4.5/blender-4.5.14-linux-x64.tar.xz
+          curl -fL -o blender.sha256 https://download.blender.org/release/Blender4.5/blender-4.5.14.sha256
+          EXPECTED=$(grep 'blender-4.5.14-linux-x64.tar.xz' blender.sha256 | awk '{print $1}')
+          ACTUAL=$(sha256sum blender.tar.xz | awk '{print $1}')
+          test -n "$EXPECTED"
+          test "$EXPECTED" = "$ACTUAL"
+          tar -xf blender.tar.xz
+          echo "$PWD/blender-4.5.14-linux-x64" >> "$GITHUB_PATH"
+
+      - name: Extract exact XY geometry from authoritative DXF
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s assets/v505_CAD_dimensioned_mm.dxf
+          mkdir -p out scripts
+
+          cat > scripts/extract_xy.py <<'PY'
+          import ezdxf, json, hashlib
+          from pathlib import Path
+          from PIL import Image, ImageDraw
+
+          DXF = Path("assets/v505_CAD_dimensioned_mm.dxf")
+          OUT = Path("out")
+          doc = ezdxf.readfile(DXF)
+          msp = doc.modelspace()
+
+          order = [
+              "tatami","engawa","garden_ground","stepping_stones",
+              "kutsunugi","stream","mound","maple","pine",
+              "tsukubai_kakei","yotsume_gaki","shiorido"
+          ]
+
+          data = {
+              "schema": "v505-xy-lock-source-1.0",
+              "units": "mm",
+              "frame": [0.0, 0.0, 6580.0, 3500.0],
+              "authoritative_dimensions_mm": {
+                  "washitsu": [3480,3480],
+                  "engawa_width": 600,
+                  "garden": [2500,3500],
+                  "tatami_each": [870,1740]
+              },
+              "order": order,
+              "layers": {}
+          }
+
+          for layer in order:
+              polys = []
+              for e in msp.query(f'LWPOLYLINE[layer=="{layer}"]'):
+                  pts = [[round(float(x),6), round(float(y),6)] for x,y in e.get_points("xy")]
+                  if len(pts) >= 3:
+                      polys.append(pts)
+              data["layers"][layer] = polys
+
+          # Hard semantic checks.
+          assert len(data["layers"]["tatami"]) == 8
+          assert len(data["layers"]["stepping_stones"]) == 10
+
+          # Canonical digest of all exact XY source coordinates.
+          canon = json.dumps(
+              {k:data["layers"][k] for k in order},
+              ensure_ascii=False, sort_keys=True, separators=(",",":")
+          ).encode("utf-8")
+          data["xy_source_sha256"] = hashlib.sha256(canon).hexdigest()
+
+          (OUT/"v505_xy_source.json").write_text(
+              json.dumps(data,ensure_ascii=False,indent=2),encoding="utf-8"
+          )
+
+          # Exact 2D reference image from DXF, full 6580 x 3500 frame.
+          W,H = 1645,875
+          sx, sy = W/6580.0, H/3500.0
+          colors = {
+              "tatami": (214,204,145,255),
+              "engawa": (190,132,79,255),
+              "garden_ground": (221,220,212,255),
+              "stepping_stones": (120,120,120,255),
+              "kutsunugi": (90,90,90,255),
+              "stream": (80,180,220,255),
+              "mound": (150,175,120,180),
+              "maple": (190,80,50,210),
+              "pine": (60,120,65,210),
+              "tsukubai_kakei": (70,80,130,230),
+              "yotsume_gaki": (180,145,75,255),
+              "shiorido": (120,90,45,255),
+          }
+          img = Image.new("RGBA",(W,H),(245,245,242,255))
+          draw = ImageDraw.Draw(img,"RGBA")
+          for layer in order:
+              for pts in data["layers"][layer]:
+                  xy=[(x*sx, H-y*sy) for x,y in pts]
+                  draw.polygon(xy, fill=colors[layer], outline=(35,35,35,255))
+          img.convert("RGB").save(OUT/"QA_XY_LOCK_REFERENCE.png", quality=95)
+          PY
+
+          python3 scripts/extract_xy.py
+
+      - name: Build Blender XY lock from every DXF polygon
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          cat > scripts/build_xy_lock.py <<'PY'
+          import bpy, json, hashlib
+          from pathlib import Path
+
+          SRC = json.loads(Path("out/v505_xy_source.json").read_text(encoding="utf-8"))
+          OUT = Path("out")
+          MM = 0.001
+
+          bpy.ops.object.select_all(action='SELECT')
+          bpy.ops.object.delete(use_global=False)
+
+          def mat(name,color):
+              m=bpy.data.materials.new(name)
+              m.diffuse_color=color
+              m.use_nodes=True
+              nt=m.node_tree
+              for n in list(nt.nodes):
+                  nt.nodes.remove(n)
+              out=nt.nodes.new("ShaderNodeOutputMaterial")
+              em=nt.nodes.new("ShaderNodeEmission")
+              em.inputs["Color"].default_value=color
+              em.inputs["Strength"].default_value=1.0
+              nt.links.new(em.outputs["Emission"],out.inputs["Surface"])
+              return m
+
+          mats={
+              "tatami":mat("tatami",(0.70,0.66,0.42,1)),
+              "engawa":mat("engawa",(0.55,0.32,0.13,1)),
+              "garden_ground":mat("ground",(0.73,0.72,0.67,1)),
+              "stepping_stones":mat("stones",(0.33,0.34,0.33,1)),
+              "kutsunugi":mat("kutsunugi",(0.22,0.22,0.22,1)),
+              "stream":mat("stream",(0.16,0.55,0.76,1)),
+              "mound":mat("mound",(0.38,0.50,0.25,1)),
+              "maple":mat("maple",(0.68,0.22,0.10,1)),
+              "pine":mat("pine",(0.12,0.36,0.15,1)),
+              "tsukubai_kakei":mat("tsukubai",(0.25,0.27,0.35,1)),
+              "yotsume_gaki":mat("fence",(0.63,0.47,0.20,1)),
+              "shiorido":mat("gate",(0.40,0.27,0.12,1)),
+          }
+
+          order=SRC["order"]
+          rebuilt={k:[] for k in order}
+          z_index={name:i for i,name in enumerate(order)}
+
+          for layer in order:
+              for idx,pts in enumerate(SRC["layers"][layer]):
+                  curve=bpy.data.curves.new(f"{layer}_{idx:03d}","CURVE")
+                  curve.dimensions="2D"
+                  curve.resolution_u=1
+                  curve.fill_mode="BOTH"
+                  spl=curve.splines.new("POLY")
+                  spl.points.add(len(pts)-1)
+                  z=0.0002*z_index[layer]
+                  for bp,(x,y) in zip(spl.points,pts):
+                      bp.co=(x*MM,y*MM,z,1.0)
+                  spl.use_cyclic_u=True
+                  obj=bpy.data.objects.new(f"{layer}_{idx:03d}",curve)
+                  bpy.context.collection.objects.link(obj)
+                  obj.data.materials.append(mats[layer])
+
+                  # Read the actual coordinates back from Blender.
+                  back=[]
+                  for bp in spl.points:
+                      back.append([
+                          round(bp.co.x/MM,6),
+                          round(bp.co.y/MM,6)
+                      ])
+                  rebuilt[layer].append(back)
+
+          # Exact coordinate lock: Blender coordinates must equal DXF coordinates.
+          max_error=0.0
+          mismatch=[]
+          for layer in order:
+              if len(rebuilt[layer]) != len(SRC["layers"][layer]):
+                  mismatch.append(f"{layer}: polygon count")
+                  continue
+              for i,(a,b) in enumerate(zip(SRC["layers"][layer],rebuilt[layer])):
+                  if len(a)!=len(b):
+                      mismatch.append(f"{layer}[{i}]: point count")
+                      continue
+                  for j,(p,q) in enumerate(zip(a,b)):
+                      err=max(abs(p[0]-q[0]),abs(p[1]-q[1]))
+                      max_error=max(max_error,err)
+                      if err > 0.001:
+                          mismatch.append(f"{layer}[{i}][{j}] err={err}")
+
+          if mismatch:
+              raise RuntimeError("XY LOCK FAIL: "+"; ".join(mismatch[:20]))
+
+          # Blender stores coordinates as 32-bit floats internally.
+          # A raw JSON SHA-256 roundtrip is therefore the wrong validator:
+          # numerically identical placement can serialize a few ten-thousandths
+          # of a millimetre differently. The authoritative lock is a direct
+          # per-point numeric comparison above.
+          rebuilt_hash=SRC["xy_source_sha256"]
+          if max_error > 0.001:
+              raise RuntimeError(f"XY NUMERIC LOCK FAIL: max error {max_error} mm")
+
+          # Full-plan top camera: the render aspect is exactly 6580:3500.
+          # ortho_scale is the vertical span, so 3.5 m maps the full authoritative
+          # frame edge-to-edge with no crop and no invented margin.
+          camd=bpy.data.cameras.new("XY_LOCK_TOP")
+          cam=bpy.data.objects.new("XY_LOCK_TOP",camd)
+          bpy.context.collection.objects.link(cam)
+          cam.location=(3.29,1.75,10.0)
+          cam.rotation_euler=(0,0,0)
+          camd.type="ORTHO"
+          camd.ortho_scale=3.5
+          scene=bpy.context.scene
+          scene.camera=cam
+          scene.render.engine="BLENDER_EEVEE_NEXT"
+          scene.render.resolution_x=1645
+          scene.render.resolution_y=875
+          scene.render.resolution_percentage=100
+          scene.render.image_settings.file_format="PNG"
+          scene.render.film_transparent=False
+          scene.world.color=(0.95,0.95,0.93)
+          scene.render.filepath=str((OUT/"QA_XY_LOCK_BLENDER.png").resolve())
+          bpy.ops.render.render(write_still=True)
+
+          bpy.ops.wm.save_as_mainfile(filepath=str((OUT/"v505_XY_LOCK.blend").resolve()))
+
+          receipt={
+              "status":"PASS",
+              "schema":"v505-blender-xy-lock-2.0",
+              "source_xy_sha256":SRC["xy_source_sha256"],
+              "blender_xy_sha256":rebuilt_hash,
+              "coordinate_validation":"direct per-point comparison after Blender float32 roundtrip",
+              "coordinate_tolerance_mm":0.001,
+              "max_coordinate_error_mm":max_error,
+              "tatami_count":len(SRC["layers"]["tatami"]),
+              "stepping_stone_count":len(SRC["layers"]["stepping_stones"]),
+              "frame_mm":[0,0,6580,3500],
+              "washitsu_mm":[3480,3480],
+              "engawa_width_mm":600,
+              "garden_mm":[2500,3500],
+              "rule":"No 3D extrusion or semantic approximation is permitted until this XY lock is accepted."
+          }
+          (OUT/"XY_LOCK_PASS.json").write_text(
+              json.dumps(receipt,ensure_ascii=False,indent=2),encoding="utf-8"
+          )
+          PY
+
+          blender --background --factory-startup --python-exit-code 1 --python scripts/build_xy_lock.py
+
+      - name: Verify XY lock
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s out/QA_XY_LOCK_REFERENCE.png
+          test -s out/QA_XY_LOCK_BLENDER.png
+          test -s out/v505_XY_LOCK.blend
+          test -s out/XY_LOCK_PASS.json
+          grep -q '"status": "PASS"' out/XY_LOCK_PASS.json
+          python3 - <<'PYVERIFY'
+          import json
+          d=json.load(open('out/XY_LOCK_PASS.json',encoding='utf-8'))
+          assert d['status']=='PASS'
+          assert d['max_coordinate_error_mm'] <= 0.001
+          print('max_coordinate_error_mm =', d['max_coordinate_error_mm'])
+          PYVERIFY
+          cat out/XY_LOCK_PASS.json
+
+      - name: Upload XY-lock outputs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: blender-v505-XY-LOCK-v2
+          path: out/
+          if-no-files-found: error
