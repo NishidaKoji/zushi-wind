@@ -1,0 +1,255 @@
+name: Blender v505 stage2 white-model QA v3
+
+on:
+  workflow_dispatch:
+
+jobs:
+  v505_stage2:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Blender runtime library
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y libegl1
+
+      - name: Download Blender 4.5.14 LTS
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fL -o blender.tar.xz https://download.blender.org/release/Blender4.5/blender-4.5.14-linux-x64.tar.xz
+          curl -fL -o blender.sha256 https://download.blender.org/release/Blender4.5/blender-4.5.14.sha256
+          EXPECTED=$(grep 'blender-4.5.14-linux-x64.tar.xz' blender.sha256 | awk '{print $1}')
+          ACTUAL=$(sha256sum blender.tar.xz | awk '{print $1}')
+          test -n "$EXPECTED"
+          test "$EXPECTED" = "$ACTUAL"
+          tar -xf blender.tar.xz
+          echo "$PWD/blender-4.5.14-linux-x64" >> "$GITHUB_PATH"
+
+      - name: Create stage2 builder script
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p scripts out assets
+          test -s assets/v505_white_model.glb
+          cat > scripts/build_stage2.py <<'PY'
+          import bpy, json, math, os
+          from pathlib import Path
+          from mathutils import Vector, Matrix
+
+          OUT = Path('out')
+          OUT.mkdir(exist_ok=True)
+
+          def fail(msg):
+              raise RuntimeError(msg)
+
+          def obj_world_bounds(obj):
+              pts = [obj.matrix_world @ Vector(c) for c in obj.bound_box]
+              xs = [p.x for p in pts]
+              ys = [p.y for p in pts]
+              zs = [p.z for p in pts]
+              return (min(xs), min(ys), min(zs)), (max(xs), max(ys), max(zs))
+
+          def scene_bounds(objects):
+              mins = [1e9, 1e9, 1e9]
+              maxs = [-1e9, -1e9, -1e9]
+              for o in objects:
+                  if o.type != 'MESH':
+                      continue
+                  lo, hi = obj_world_bounds(o)
+                  for i in range(3):
+                      mins[i] = min(mins[i], lo[i])
+                      maxs[i] = max(maxs[i], hi[i])
+              return mins, maxs
+
+          def mat(name, color, rough=0.65):
+              m = bpy.data.materials.get(name) or bpy.data.materials.new(name)
+              m.use_nodes = True
+              bsdf = m.node_tree.nodes.get('Principled BSDF')
+              if bsdf:
+                  bsdf.inputs['Base Color'].default_value = color
+                  bsdf.inputs['Roughness'].default_value = rough
+              return m
+
+          MATS = {
+              'tatami': mat('MAT_TATAMI', (0.62, 0.57, 0.34, 1)),
+              'engawa': mat('MAT_ENGAWA', (0.32, 0.16, 0.06, 1)),
+              'ground': mat('MAT_GROUND', (0.50, 0.48, 0.42, 1)),
+              'stone': mat('MAT_STONE', (0.26, 0.27, 0.26, 1)),
+              'water': mat('MAT_WATER', (0.12, 0.42, 0.62, 1), 0.25),
+              'mound': mat('MAT_MOUND', (0.26, 0.40, 0.19, 1)),
+              'maple': mat('MAT_MAPLE', (0.42, 0.16, 0.08, 1)),
+              'pine': mat('MAT_PINE', (0.10, 0.26, 0.10, 1)),
+              'bamboo': mat('MAT_BAMBOO', (0.55, 0.42, 0.18, 1)),
+              'darkwood': mat('MAT_DARKWOOD', (0.16, 0.08, 0.035, 1)),
+              'room': mat('MAT_ROOM', (0.53, 0.49, 0.38, 1)),
+          }
+
+          def category(name):
+              n = name.lower()
+              if n.startswith('tatami_'): return 'tatami'
+              if n == 'engawa' or n.startswith('engawa_seam'): return 'engawa'
+              if n in ('room_base',): return 'room'
+              if n in ('garden_base',): return 'ground'
+              if 'stream_surface' in n: return 'water'
+              if 'stream_bed' in n: return 'stone'
+              if 'stepping_stones' in n or 'kutsunugi' in n or 'tsukubai' in n or 'teshoku' in n: return 'stone'
+              if 'mound' in n: return 'mound'
+              if 'maple' in n: return 'maple'
+              if 'pine' in n: return 'pine'
+              if 'fence_' in n or 'kakei' in n or 'gate_diag' in n: return 'bamboo'
+              if 'gate_post' in n or 'shoji' in n: return 'darkwood'
+              return 'ground'
+
+          bpy.ops.object.select_all(action='SELECT')
+          bpy.ops.object.delete(use_global=False)
+          bpy.ops.import_scene.gltf(filepath=os.path.abspath('assets/v505_white_model.glb'))
+
+          # glTF -> Blender axis conversion leaves this recovered model standing
+          # in the X-Z plane. Rotate the complete imported geometry around the
+          # world origin so the authoritative plan lies in Blender X-Y.
+          imported = [o for o in bpy.context.scene.objects if o.type == 'MESH']
+          rot = Matrix.Rotation(math.radians(-90.0), 4, 'X')
+          for o in imported:
+              o.matrix_world = rot @ o.matrix_world
+
+          meshes = [o for o in bpy.context.scene.objects if o.type == 'MESH']
+          if not meshes:
+              fail('GLB import produced no mesh objects')
+
+          for o in meshes:
+              c = category(o.name)
+              o.data.materials.clear()
+              o.data.materials.append(MATS[c])
+
+          names = {o.name for o in meshes}
+          required = [
+              'room_base', 'garden_base', 'engawa',
+              'kutsunugi_0', 'stream_bed_0', 'stream_surface_0',
+              'mound_0', 'maple_canopy_envelope_0', 'pine_canopy_envelope_0',
+              'tsukubai_QA', 'kakei_QA', 'teshokuishi',
+          ]
+          missing = [n for n in required if n not in names]
+          if missing:
+              fail('Missing required objects: ' + ', '.join(missing))
+
+          tatami = sorted([n for n in names if n.startswith('tatami_')])
+          stones = sorted([n for n in names if n.startswith('stepping_stones_')])
+          if len(tatami) != 8:
+              fail(f'tatami count {len(tatami)} != 8')
+          if len(stones) != 10:
+              fail(f'stepping stone count {len(stones)} != 10')
+
+          lo, hi = scene_bounds(meshes)
+          size = [hi[i] - lo[i] for i in range(3)]
+          if abs(size[0] - 6.58) > 0.01:
+              fail(f'unexpected overall X size: {size[0]}')
+          if size[1] < 3.47 or size[1] > 3.53:
+              fail(f'unexpected overall Y size after axis correction: {size[1]}')
+          if size[2] < 1.15 or size[2] > 1.19:
+              fail(f'unexpected overall Z height after axis correction: {size[2]}')
+          if lo[2] < -0.20 or hi[2] < 0.90:
+              fail(f'model is upside-down or below base plane: Z bounds {lo[2]} .. {hi[2]}')
+
+          bpy.ops.object.light_add(type='SUN', location=(3.3, 1.8, 8))
+          sun = bpy.context.object
+          sun.rotation_euler = (math.radians(30), math.radians(-20), math.radians(-28))
+          sun.data.energy = 2.2
+
+          bpy.ops.object.light_add(type='AREA', location=(2.8, -2.0, 7.0))
+          area = bpy.context.object
+          area.data.energy = 1000
+          area.data.shape = 'DISK'
+          area.data.size = 6.0
+
+          def point_camera(cam, target):
+              direction = Vector(target) - cam.location
+              cam.rotation_euler = direction.to_track_quat('-Z', 'Y').to_euler()
+
+          scene = bpy.context.scene
+          scene.render.engine = 'BLENDER_EEVEE_NEXT'
+          scene.render.image_settings.file_format = 'PNG'
+          scene.render.resolution_percentage = 100
+          scene.world.color = (0.055, 0.055, 0.055)
+          center = ((lo[0]+hi[0])/2, (lo[1]+hi[1])/2, 0.15)
+
+          camd = bpy.data.cameras.new('QA_ORTHO')
+          cam = bpy.data.objects.new('QA_ORTHO', camd)
+          bpy.context.collection.objects.link(cam)
+          cam.location = (center[0], center[1], 10.0)
+          camd.type = 'ORTHO'
+          camd.ortho_scale = 4.2
+          point_camera(cam, center)
+          scene.camera = cam
+          scene.render.resolution_x = 1600
+          scene.render.resolution_y = 900
+          scene.render.filepath = str((OUT / 'QA_stage2_white_top.png').resolve())
+          bpy.ops.render.render(write_still=True)
+
+          pcamd = bpy.data.cameras.new('QA_PERSPECTIVE')
+          pcam = bpy.data.objects.new('QA_PERSPECTIVE', pcamd)
+          bpy.context.collection.objects.link(pcam)
+          pcam.location = (8.7, -7.4, 5.7)
+          pcamd.type = 'PERSP'
+          pcamd.lens = 52
+          point_camera(pcam, (4.0, 1.75, 0.28))
+          scene.camera = pcam
+          scene.render.resolution_x = 1600
+          scene.render.resolution_y = 1000
+          scene.render.filepath = str((OUT / 'QA_stage2_white_perspective.png').resolve())
+          bpy.ops.render.render(write_still=True)
+
+          bpy.ops.wm.save_as_mainfile(filepath=str((OUT / 'v505_stage2_white_model.blend').resolve()))
+
+          inventory = {}
+          for o in meshes:
+              a, b = obj_world_bounds(o)
+              inventory[o.name] = {'min': [round(v, 6) for v in a], 'max': [round(v, 6) for v in b]}
+
+          receipt = {
+              'status': 'PASS',
+              'schema': 'v505-stage2-white-model-receipt-1.0',
+              'blender_version': bpy.app.version_string,
+              'mesh_object_count': len(meshes),
+              'tatami_count': len(tatami),
+              'stepping_stone_count': len(stones),
+              'scene_bounds_min_m': [round(v, 6) for v in lo],
+              'scene_bounds_max_m': [round(v, 6) for v in hi],
+              'scene_size_m': [round(v, 6) for v in size],
+              'required_objects_missing': missing,
+              'outputs': ['QA_stage2_white_top.png', 'QA_stage2_white_perspective.png', 'v505_stage2_white_model.blend'],
+              'inventory': inventory,
+          }
+          (OUT / 'STAGE2_GEOMETRY_PASS.json').write_text(json.dumps(receipt, ensure_ascii=False, indent=2), encoding='utf-8')
+          PY
+
+      - name: Run v505 stage2 white-model QA
+        shell: bash
+        run: |
+          set -euo pipefail
+          blender --background --factory-startup --python-exit-code 1 --python scripts/build_stage2.py
+
+      - name: Verify stage2 outputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s out/QA_stage2_white_top.png
+          test -s out/QA_stage2_white_perspective.png
+          test -s out/v505_stage2_white_model.blend
+          test -s out/STAGE2_GEOMETRY_PASS.json
+          grep -q '"status": "PASS"' out/STAGE2_GEOMETRY_PASS.json
+          file out/QA_stage2_white_top.png
+          file out/QA_stage2_white_perspective.png
+          cat out/STAGE2_GEOMETRY_PASS.json
+
+      - name: Upload v505 stage2 outputs
+        uses: actions/upload-artifact@v4
+        with:
+          name: blender-v505-stage2-white-model-v3
+          path: out/
+          if-no-files-found: error
