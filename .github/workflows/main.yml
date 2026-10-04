@@ -7,6 +7,7 @@ on:
 
 permissions:
   contents: write
+  issues: write
 
 concurrency:
   group: zushi-wind-update
@@ -16,6 +17,7 @@ jobs:
   update:
     runs-on: ubuntu-latest
     timeout-minutes: 8
+
     steps:
       - uses: actions/checkout@v4
 
@@ -25,6 +27,8 @@ jobs:
           sudo apt-get install -y -qq ffmpeg tesseract-ocr
 
       - name: Read and publish wind
+        id: wind
+        continue-on-error: true
         env:
           YOUTUBE_COOKIES_B64: ${{ secrets.YOUTUBE_COOKIES_B64 }}
         run: |
@@ -37,7 +41,56 @@ jobs:
           chmod 600 "$COOKIE_FILE"
           YOUTUBE_COOKIES_FILE="$COOKIE_FILE" python generate_cloud.py
 
+      - name: Check 30 minute failure state
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          STATE_DIR=".github/wind-monitor"
+          STATE_FILE="$STATE_DIR/state.txt"
+          mkdir -p "$STATE_DIR"
+
+          START=0
+          ISSUE=0
+
+          if [ -f "$STATE_FILE" ]; then
+            read -r START ISSUE < "$STATE_FILE" || true
+          fi
+
+          NOW=$(date +%s)
+
+          if [ "${{ steps.wind.outcome }}" = "success" ]; then
+            if [ "${ISSUE:-0}" != "0" ]; then
+              gh issue close "$ISSUE" --comment "@NishidaKoji 逗子マリーナ風速取得が復旧しました。"
+            fi
+            echo "0 0" > "$STATE_FILE"
+          else
+            if [ "${START:-0}" = "0" ]; then
+              START=$NOW
+            fi
+
+            ELAPSED=$((NOW - START))
+
+            if [ "$ELAPSED" -ge 1800 ] && [ "${ISSUE:-0}" = "0" ]; then
+              URL=$(gh issue create --title "逗子マリーナ風速取得が30分以上停止" --body "@NishidaKoji 逗子マリーナの風速取得が30分以上連続して失敗しています。GitHub Actions の Update Zushi wind を確認してください。障害継続中は通知を繰り返さず、復旧時にこのIssueを自動で閉じます。")
+              ISSUE="${URL##*/}"
+            fi
+
+            echo "$START ${ISSUE:-0}" > "$STATE_FILE"
+          fi
+
+      - name: Save monitor state
+        if: always()
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .github/wind-monitor/state.txt
+          git diff --cached --quiet || git commit -m "Update wind monitor state"
+          git push
+
       - name: Save latest reading
+        if: steps.wind.outcome == 'success'
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
