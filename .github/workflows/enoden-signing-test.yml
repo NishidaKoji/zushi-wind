@@ -37,12 +37,13 @@ jobs:
           actions=p['WFWorkflowActions']
           print('ACTIONS',len(actions),'WATCH',p.get('WFWorkflowTypes'))
           assert 'Watch' in p.get('WFWorkflowTypes',[])
-          assert not any(a['WFWorkflowActionIdentifier']=='is.workflow.actions.detect.text' for a in actions), 'OCR remains'
+          assert not any(a['WFWorkflowActionIdentifier']=='is.workflow.actions.detect.text' for a in actions), 'unexpected getText conversion remains'
           split=[a for a in actions if a['WFWorkflowActionIdentifier']=='is.workflow.actions.text.split']
           print('FIRST_SPLIT',split[0]['WFWorkflowActionParameters'])
           assert len(split)>=2
           first=split[0]['WFWorkflowActionParameters']['text']['Value']['attachmentsByRange']['{0, 1}']
-          assert first['OutputName']=='downloaded', 'first split is not fed raw downloaded content'
+          assert first['OutputName']=='html', 'first split is not fed explicit HTML text conversion'
+          assert any(a['WFWorkflowActionIdentifier']=='is.workflow.actions.gettext' and a['WFWorkflowActionParameters'].get('CustomOutputName')=='html' for a in actions), 'explicit text action not found'
           additions=[]
           for a in actions:
               par=a['WFWorkflowActionParameters']
