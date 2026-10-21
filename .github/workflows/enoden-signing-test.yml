@@ -38,13 +38,25 @@ jobs:
           for i,x in enumerate(a[:13]):
               print('INITIAL_ACTION',i,x['WFWorkflowActionIdentifier'],json.dumps(x.get('WFWorkflowActionParameters',{}),ensure_ascii=False))
           names=[x['WFWorkflowActionIdentifier'] for x in a]
-          assert any('setname' in n for n in names),'No .txt file name conversion'
+          assert 'is.workflow.actions.setitemname' in names,'No .txt file name conversion'
           assert 'is.workflow.actions.detect.text' in names,'Get Text from .txt file missing'
+          rename=next(x for x in a if x['WFWorkflowActionIdentifier']=='is.workflow.actions.setitemname')
+          assert rename['WFWorkflowActionParameters']['WFName']=='enoden-kamakura.txt'
+          decoded=next(x for x in a if x['WFWorkflowActionIdentifier']=='is.workflow.actions.detect.text')
+          assert decoded['WFWorkflowActionParameters']['WFInput']['Value']['OutputName']=='renamed'
           assert any(x['WFWorkflowActionIdentifier']=='is.workflow.actions.text.split' for x in a)
           assert sum(x.get('WFWorkflowActionParameters',{}).get('WFMathOperation')=='+' for x in a)>=4
           assert '江ノ電 鎌倉駅' in str(p.get('WFWorkflowName',''))
           print('STATIC_PASS')
           PY
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git config user.name 'github-actions[bot]'
+          git fetch origin enoden-shortcut-build-20261021
+          git checkout -B enoden-shortcut-build-20261021 origin/enoden-shortcut-build-20261021
+          git add -f 'enoden/江ノ電 鎌倉駅 次発2本 v3.shortcut'
+          git commit -m 'Publish signed HTML filename coercion v3 [skip ci]'
+          git push origin HEAD:enoden-shortcut-build-20261021
+          echo 'PUBLISHED_SIGNED_V3=true'
       - name: Verify timetable HTML structure, destination markings and top-two calculation
         shell: bash
         run: |
