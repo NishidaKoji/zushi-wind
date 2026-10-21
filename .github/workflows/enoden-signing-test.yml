@@ -20,16 +20,16 @@ jobs:
           set -euxo pipefail
           git clone -q --depth 1 https://github.com/electrikmilk/cherri.git /tmp/cherri
           cd /tmp/cherri
-          go run . "$GITHUB_WORKSPACE/enoden/next-two-v3.cherri" --debug --no-sign
+          go run . "$GITHUB_WORKSPACE/enoden/next-two-v4.cherri" --debug --no-sign
           ls -lah "$GITHUB_WORKSPACE/enoden/"
-      - name: Validate V3 shortcut raw-text file handling and arithmetic
+      - name: Validate V4 shortcut raw-text file handling and arithmetic
         shell: bash
         run: |
           set -euo pipefail
           python3 - <<'PY'
           import plistlib,glob,json
-          ps=glob.glob('enoden/*v3.plist'); assert len(ps)==1,ps
-          sh=glob.glob('enoden/*v3.shortcut'); assert len(sh)==1,sh
+          ps=glob.glob('enoden/*v4.plist'); assert len(ps)==1,ps
+          sh=glob.glob('enoden/*v4.shortcut'); assert len(sh)==1,sh
           b=open(sh[0],'rb').read();print('SIGNATURE',repr(b[:4]),len(b));assert b[:4]==b'AEA1'
           p=plistlib.load(open(ps[0],'rb'))
           a=p['WFWorkflowActions']
@@ -47,16 +47,24 @@ jobs:
           assert any(x['WFWorkflowActionIdentifier']=='is.workflow.actions.text.split' for x in a)
           assert sum(x.get('WFWorkflowActionParameters',{}).get('WFMathOperation')=='+' for x in a)>=4
           assert 'Watch' in p.get('WFWorkflowTypes',[])
+          conds=[(i,x.get('WFWorkflowActionParameters',{})) for i,x in enumerate(a) if x['WFWorkflowActionIdentifier']=='is.workflow.actions.conditional' and x.get('WFWorkflowActionParameters',{}).get('WFControlFlowMode')==0]
+          for i,par in conds:
+              print('CONDITIONAL',i,'operator',par.get('WFCondition'),'keys',sorted(par.keys()),'number',par.get('WFNumberValue'),'string',par.get('WFConditionalActionString'))
+              if par.get('WFCondition') in (0,1,2,3,4,5):
+                  assert 'WFNumberValue' in par, f'Numeric comparison without numeric parameter at action {i}: {par}'
+                  assert 'WFConditionalActionString' not in par, f'Text parameter used in numeric comparison at action {i}: {par}'
+          assert len(conds)>=7, 'Unexpectedly few IF actions'
+          print('CONDITIONS_STATIC_VALIDATION_PASS')
           print('STATIC_PASS')
           PY
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git config user.name 'github-actions[bot]'
           git fetch origin enoden-shortcut-build-20261021
           git checkout -B enoden-shortcut-build-20261021 origin/enoden-shortcut-build-20261021
-          git add -f 'enoden/江ノ電 鎌倉駅 次発2本 v3.shortcut'
-          git commit -m 'Publish signed HTML filename coercion v3 [skip ci]'
+          git add -f 'enoden/江ノ電 鎌倉駅 次発2本 v4.shortcut'
+          git commit -m 'Publish signed HTML filename coercion v4 [skip ci]'
           git push origin HEAD:enoden-shortcut-build-20261021
-          echo 'PUBLISHED_SIGNED_V3=true'
+          echo 'PUBLISHED_SIGNED_V4=true'
       - name: Verify timetable HTML structure, destination markings and top-two calculation
         shell: bash
         run: |
