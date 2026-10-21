@@ -89,6 +89,35 @@ jobs:
           git diff --cached --quiet || git commit -m "Update wind monitor state"
           git push
 
+      - name: Publish failure status
+        if: steps.wind.outcome != 'success'
+        run: |
+          python - <<'PY'
+          import html, json
+          from datetime import datetime
+          from pathlib import Path
+          from zoneinfo import ZoneInfo
+          root = Path(".")
+          latest = "不明"
+          try:
+              data = json.loads((root / "wind.json").read_text(encoding="utf-8"))
+              latest = datetime.fromtimestamp(int(data["ts"]), ZoneInfo("Asia/Tokyo")).strftime("%m/%d %H:%M")
+          except (OSError, KeyError, ValueError, TypeError, OverflowError):
+              pass
+          body = f"逗子マリーナ\\n風速データ取得停止中\\n最終取得 {latest}\\n現在の風速は確認できません"
+          (root / "watch.txt").write_text(body + "\\n", encoding="utf-8")
+          (root / "index.html").write_text(
+              "<!doctype html><meta charset='utf-8'><meta name='viewport' content='width=device-width'>"
+              "<title>逗子マリーナ風速</title><style>body{font:22px system-ui;white-space:pre-line;"
+              "padding:24px;line-height:1.7}</style>" + html.escape(body), encoding="utf-8")
+          print(body)
+          PY
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add watch.txt index.html
+          git diff --cached --quiet || git commit -m "Show failure rather than stale wind reading"
+          git push
+
       - name: Save latest reading
         if: steps.wind.outcome == 'success'
         run: |
