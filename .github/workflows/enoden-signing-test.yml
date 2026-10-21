@@ -3,9 +3,6 @@ on:
   push:
     branches:
       - enoden-shortcut-build-20261021
-  pull_request:
-    branches:
-      - main
 jobs:
   inspect:
     runs-on: ubuntu-latest
@@ -21,17 +18,49 @@ jobs:
           cd /tmp/cherri
           go run . "$GITHUB_WORKSPACE/enoden/next-two.cherri" --debug --no-sign
           ls -lah "$GITHUB_WORKSPACE/enoden/"
-      - name: Inspect generated action parameters
+      - name: Inspect native workflow for regression and publish versioned signed shortcut
         shell: bash
         run: |
+          set -euxo pipefail
           python3 - <<'PY'
-          import plistlib,glob,json
-          p=plistlib.load(open(glob.glob('enoden/*.plist')[0],'rb'))
-          print('ACTION_COUNT',len(p.get('WFWorkflowActions',[])))
-          for i,a in enumerate(p.get('WFWorkflowActions',[])):
-              print('\nACTION',i,a['WFWorkflowActionIdentifier'])
-              print(json.dumps(a.get('WFWorkflowActionParameters',{}),ensure_ascii=False,default=str)[:3400])
+          import plistlib,glob,os
+          files=glob.glob('enoden/*修正版.shortcut')
+          assert len(files)==1,files
+          b=open(files[0],'rb').read()
+          print('SIGNED_MAGIC',repr(b[:4]),'SIZE',len(b))
+          assert b[:4]==b'AEA1' and len(b)>1000
+          p=plistlib.load(open(glob.glob('enoden/*修正版.plist')[0],'rb'))
+          actions=p['WFWorkflowActions']
+          print('ACTIONS',len(actions),'WATCH',p.get('WFWorkflowTypes'))
+          assert 'Watch' in p.get('WFWorkflowTypes',[])
+          assert not any(a['WFWorkflowActionIdentifier']=='is.workflow.actions.detect.text' for a in actions), 'OCR remains'
+          split=[a for a in actions if a['WFWorkflowActionIdentifier']=='is.workflow.actions.text.split']
+          print('FIRST_SPLIT',split[0]['WFWorkflowActionParameters'])
+          assert len(split)>=2
+          first=split[0]['WFWorkflowActionParameters']['text']['Value']['attachmentsByRange']['{0, 1}']
+          assert first['OutputName']=='downloaded', 'first split is not fed raw downloaded content'
+          additions=[]
+          for a in actions:
+              par=a['WFWorkflowActionParameters']
+              if a['WFWorkflowActionIdentifier']=='is.workflow.actions.math':
+                  print('MATH',par.get('WFMathOperation'),par.get('WFInput'),par.get('WFMathOperand'))
+                  if par.get('WFMathOperation')=='+': additions.append(par)
+          assert len(additions)>=3,'missing addition calculation steps'
+          # This catches the old bug that overwrote "now" and "departure".
+          for idx,a in enumerate(actions):
+              par=a['WFWorkflowActionParameters']
+              if a['WFWorkflowActionIdentifier']=='is.workflow.actions.setvariable' and par.get('WFVariableName') in ('now','departure'):
+                  print('SETTING',idx,par.get('WFVariableName'),par['WFInput'])
+          assert len(actions)>80,'abnormally short workflow'
+          print('SHORTCUT_STATIC_VALIDATION_PASS')
           PY
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git config user.name "github-actions[bot]"
+          git fetch origin enoden-shortcut-build-20261021
+          git checkout -B enoden-shortcut-build-20261021 origin/enoden-shortcut-build-20261021
+          git add -f "enoden/江ノ電 鎌倉駅 次発2本 修正版.shortcut"
+          git commit -m "Publish validated signed Enoden timetable shortcut v2 [skip ci]"
+          git push origin HEAD:enoden-shortcut-build-20261021
       - name: Verify timetable HTML structure, destination markings and top-two calculation
         shell: bash
         run: |
