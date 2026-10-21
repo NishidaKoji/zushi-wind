@@ -37,9 +37,18 @@ jobs:
           p={'WFWorkflowActions':[{'WFWorkflowActionIdentifier':'is.workflow.actions.gettext','WFWorkflowActionParameters':{'UUID':str(uuid.uuid4()).upper(),'WFTextActionText':'Enoden signing check'}}], 'WFWorkflowClientVersion':'3036.0.4','WFWorkflowHasOutputFallback':False,'WFWorkflowHasShortcutInputVariables':False,'WFWorkflowIcon':{'WFWorkflowIconStartColor':4282601983,'WFWorkflowIconGlyphNumber':59845},'WFWorkflowImportQuestions':[],'WFWorkflowInputContentItemClasses':[],'WFWorkflowMinimumClientVersion':900,'WFWorkflowMinimumClientVersionString':'900','WFWorkflowName':'江ノ電署名確認','WFWorkflowOutputContentItemClasses':[],'WFWorkflowTypes':[]}
           open('test.wflow','wb').write(plistlib.dumps(p))
           PY
-          shortcuts sign --mode anyone --input test.wflow --output signed-test.shortcut
+          cp test.wflow test.shortcut
+          curl -L --retry 2 --connect-timeout 10 --max-time 45 -sS \
+            -F "file=@test.shortcut" \
+            -w '\nSigning HTTP %{http_code}; returned %{size_download} bytes\n' \
+            'https://sign.shortcuty.app/api/v1/sign' -o signed-test.shortcut
           file signed-test.shortcut
           ls -l signed-test.shortcut
+          python3 - <<'PY'
+          b=open('signed-test.shortcut','rb').read()
+          print('SIGN_MAGIC',b[:4], 'BYTES',len(b))
+          assert b[:4] == b'AEA1' and len(b) > 1000, 'not a signed Apple shortcut'
+          PY
       - name: Upload signed diagnostic
         uses: actions/upload-artifact@v4
         with:
