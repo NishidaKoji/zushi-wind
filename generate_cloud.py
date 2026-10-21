@@ -87,17 +87,15 @@ def candidate_video_urls():
         request = urllib.request.Request(page, headers={"User-Agent": "Mozilla/5.0"})
         with urllib.request.urlopen(request, timeout=15) as response:
             page_html = response.read().decode("utf-8", "replace")
-        # Identify the wind-meter section rather than selecting the camera stream.
-        marker = page_html.find("風向風速計")
-        section = page_html[marker:] if marker >= 0 else ""
-        matches = re.findall(
-            r'(?:youtube\.com/(?:embed/|watch\?v=)|youtu\.be/)([A-Za-z0-9_-]{11})',
-            section,
-        )
-        for video_id in matches:
-            url = "https://www.youtube.com/watch?v=" + video_id
-            if url not in urls:
-                urls.append(url)
+        # Only trust video links labelled as wind-meter footage, never the camera.
+        pattern = r'(?:youtube\.com/(?:embed/|watch\?v=)|youtu\.be/)([A-Za-z0-9_-]{11})'
+        for match in re.finditer(pattern, page_html):
+            nearby = page_html[max(0, match.start() - 600):match.end() + 250]
+            if ("風向風速計" in nearby or "Anemometer" in nearby or
+                    match.group(1) == "41UP1WsRBKw"):
+                url = "https://www.youtube.com/watch?v=" + match.group(1)
+                if url not in urls:
+                    urls.append(url)
     except Exception as exc:
         print(f"公式ページの確認失敗: {exc}", file=sys.stderr)
     if zushi_wind.VIDEO_URL not in urls:
