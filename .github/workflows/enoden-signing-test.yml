@@ -1,4 +1,4 @@
-name: Enoden timetable HTML structural diagnostic
+name: Enoden native shortcut compile and live HTML tests
 on:
   push:
     branches:
@@ -12,20 +12,41 @@ jobs:
     permissions:
       contents: read
     steps:
-      - name: Inspect last departures and class markup
+      - uses: actions/checkout@v4
+      - name: Compile Apple native shortcut via Cherri
+        shell: bash
+        run: |
+          set -euxo pipefail
+          git clone -q --depth 1 https://github.com/electrikmilk/cherri.git /tmp/cherri
+          cd /tmp/cherri
+          go run . "$GITHUB_WORKSPACE/enoden/next-two.cherri" --debug --no-sign
+          ls -lah "$GITHUB_WORKSPACE/enoden/"
+      - name: Verify timetable HTML structure, destination markings and top-two calculation
         shell: bash
         run: |
           python3 - <<'PY'
           import urllib.request,re
           u='https://www.enoden.co.jp/train/station/kamakura/time-table/'
-          req=urllib.request.Request(u,headers={'User-Agent':'Mozilla/5.0','Cache-Control':'no-cache'})
-          res=urllib.request.urlopen(req,timeout=20)
-          s=res.read().decode('utf-8','replace')
-          print('len',len(s),'content-type',res.headers.get('Content-Type'))
-          for h in (21,22,23):
-              x=f'<div class="time-schedule-td time-schedule-td-hour">{h}</div>'
-              i=s.find(x)
-              print('HOUR',h,'OFFSET',i,'HTML',s[max(0,i-40):i+1500])
-          for k in ('藤沢行き','江ノ島行','time-schedule-minute','time-schedule-row'):
-              print(k,'count',s.count(k))
+          q=urllib.request.Request(u,headers={'User-Agent':'Mozilla/5.0','Cache-Control':'no-cache'})
+          s=urllib.request.urlopen(q,timeout=20).read().decode('utf-8','replace')
+          stops=[]
+          for r in s.split('<div class="time-schedule-row">'):
+              h=re.search(r'time-schedule-td-hour">([0-9]{1,2})',r)
+              if not h: continue
+              hour=int(h.group(1))
+              for c in r.split('<div class="time-schedule-minute">')[1:]:
+                  m=re.search(r'<p class="num">([0-9]{1,2})</p>',c)
+                  if m:
+                      destination='江ノ島' if 'num cap">江' in c else ('極楽寺' if 'num cap">極' in c else ('稲村ヶ崎' if 'num cap">稲' in c else '藤沢'))
+                      stops.append((hour*60+int(m.group(1)),destination))
+          print('Found services:',len(stops),'destinations',sorted(set(x[1] for x in stops)))
+          assert len(stops)>2
+          assert (22*60+24,'江ノ島') in stops
+          assert (23*60+38,'江ノ島') in stops
+          assert (22*60+10,'藤沢') in stops
+          assert (23*60+5,'藤沢') in stops
+          for h,m in [(0,15),(9,59),(22,9),(22,10),(23,40)]:
+              now=h*60+m
+              upcoming=sorted((((t-now)%1440 or 1440,t,d) for t,d in stops))
+              print(f'AT {h:02}:{m:02}:',upcoming[:2])
           PY
