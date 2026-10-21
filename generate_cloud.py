@@ -80,27 +80,26 @@ import zushi_wind_cloud as zushi_wind
 
 
 def candidate_video_urls():
-    """Read the official Riviera anemometer embed instead of trusting a permanent video ID."""
+    """Find the anemometer video on Riviera's official page."""
     page = "https://www.riviera.co.jp/area/zushi/livecamera/"
     urls = []
     try:
         request = urllib.request.Request(page, headers={"User-Agent": "Mozilla/5.0"})
         with urllib.request.urlopen(request, timeout=15) as response:
-            html_text = response.read().decode("utf-8", "replace")
-        section = html_text.find("風向風速計")
+            page_html = response.read().decode("utf-8", "replace")
+        # Identify the wind-meter section rather than selecting the camera stream.
+        marker = page_html.find("風向風速計")
+        section = page_html[marker:] if marker >= 0 else ""
         matches = re.findall(
-            r"(?:youtube\\.com/(?:embed/|watch\\?v=)|youtu\\.be/)([A-Za-z0-9_-]{11})",
-            html_text,
+            r'(?:youtube\.com/(?:embed/|watch\?v=)|youtu\.be/)([A-Za-z0-9_-]{11})',
+            section,
         )
-        # The anemometer embed normally comes after the camera embed.
-        for video_id in reversed(matches):
-            link = "https://www.youtube.com/watch?v=" + video_id
-            if link not in urls:
-                urls.append(link)
+        for video_id in matches:
+            url = "https://www.youtube.com/watch?v=" + video_id
+            if url not in urls:
+                urls.append(url)
     except Exception as exc:
-        print(f"公式ページから動画IDを取得できません: {exc}", file=sys.stderr)
-    # Channel live is useful if Riviera replaced the static video embed.
-    urls.append("https://www.youtube.com/@rivieraofficial8715/live")
+        print(f"公式ページの確認失敗: {exc}", file=sys.stderr)
     if zushi_wind.VIDEO_URL not in urls:
         urls.append(zushi_wind.VIDEO_URL)
     return urls
