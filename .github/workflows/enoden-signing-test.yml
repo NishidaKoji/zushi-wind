@@ -1,0 +1,44 @@
+name: Enoden isolated signing check
+on:
+  push:
+    branches:
+      - enoden-shortcut-build-20261021
+  workflow_dispatch:
+jobs:
+  inspect:
+    runs-on: macos-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Check official HTML and signer
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "OS: $(sw_vers -productVersion)"
+          xcrun --find shortcuts || true
+          shortcuts sign --help || true
+          python3 - <<'PY'
+          import urllib.request, re
+          u='https://www.enoden.co.jp/train/station/kamakura/time-table/'
+          req=urllib.request.Request(u,headers={'User-Agent':'Mozilla/5.0','Cache-Control':'no-cache'})
+          b=urllib.request.urlopen(req,timeout=20).read()
+          s=b.decode('utf-8','replace')
+          print('HTML_LENGTH',len(s))
+          for marker in ('藤沢行き','江ノ島行','時刻表','<tbody','class="time','<table'):
+              print('MARKER',marker,s.find(marker))
+          p=s.find('藤沢行き')
+          if p>=0: print('HTML_SNIP',s[max(0,p-900):p+6200])
+          PY
+          python3 - <<'PY'
+          import plistlib,uuid
+          p={'WFWorkflowActions':[{'WFWorkflowActionIdentifier':'is.workflow.actions.gettext','WFWorkflowActionParameters':{'UUID':str(uuid.uuid4()).upper(),'WFTextActionText':'Enoden signing check'}}], 'WFWorkflowClientVersion':'3036.0.4','WFWorkflowHasOutputFallback':False,'WFWorkflowHasShortcutInputVariables':False,'WFWorkflowIcon':{'WFWorkflowIconStartColor':4282601983,'WFWorkflowIconGlyphNumber':59845},'WFWorkflowImportQuestions':[],'WFWorkflowInputContentItemClasses':[],'WFWorkflowMinimumClientVersion':900,'WFWorkflowMinimumClientVersionString':'900','WFWorkflowName':'江ノ電署名確認','WFWorkflowOutputContentItemClasses':[],'WFWorkflowTypes':[]}
+          open('test.wflow','wb').write(plistlib.dumps(p))
+          PY
+          shortcuts sign --mode anyone --input test.wflow --output signed-test.shortcut
+          file signed-test.shortcut
+          ls -l signed-test.shortcut
+      - name: Upload signed diagnostic
+        uses: actions/upload-artifact@v4
+        with:
+          name: enoden-sign-test
+          path: signed-test.shortcut
