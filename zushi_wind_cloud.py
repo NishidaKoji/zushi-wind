@@ -5,7 +5,6 @@ from collections import Counter
 from pathlib import Path
 from urllib.request import Request, urlopen
 
-VIDEO_URL = "https://www.youtube.com/watch?v=41UP1WsRBKw"
 BASE = Path(os.environ.get("ZUSHI_BASE", str(Path.home() / ".zushi_wind")))
 FRAME, LAST = BASE / "frame.jpg", BASE / "last.json"
 
@@ -179,24 +178,21 @@ def read_direction(work):
 
 def sample():
     BASE.mkdir(parents=True, exist_ok=True)
-    grab_frame(); old = load_last(); debug = {}
+    grab_frame()
+    debug = {}
     with tempfile.TemporaryDirectory(dir=BASE) as td:
-        work = Path(td); values = {}
+        work = Path(td)
+        values = {}
         for name, box in CROPS.items():
             values[name], debug[name] = read_number(name, box, work)
         direction, direction_code = read_direction(work)
-    for key in CROPS:
-        if values[key] is None:
-            values[key] = old.get(key)
-    if direction is None:
-        direction = old.get("direction", "?")
-    if direction_code is None:
-        direction_code = old.get("direction_code")
-    if values["speed"] is None:
-        raise RuntimeError("現在風速を認識できません")
-    for key in ("maxday", "max1h", "max10"):
-        if values[key] is not None and values[key] < values["speed"]:
-            values[key] = old.get(key)
+    missing = [name for name, value in values.items() if value is None]
+    if direction is None or direction_code is None:
+        missing.append("direction")
+    if missing:
+        raise RuntimeError("現在の画像から読み取れない項目: " + ", ".join(missing))
+    if any(values[key] < values["speed"] for key in ("maxday", "max1h", "max10")):
+        raise RuntimeError("最大風速と現在風速の整合性エラー")
     data = {"ts": int(time.time()), **values, "direction": direction,
             "direction_code": direction_code, "debug": debug}
     atomic_json(LAST, data)
