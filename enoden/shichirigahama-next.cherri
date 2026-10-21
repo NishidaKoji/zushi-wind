@@ -149,6 +149,6 @@ if @bestF2 == 1500 {
     if @bestK2 == 1500 {
         show("江ノ電 七里ヶ浜駅\n時刻表を読み取れませんでした。\n取得文字：{@htmlLength}／時間帯：{@hoursCount}\n藤沢方面：{@fujisawaCount}／鎌倉方面：{@kamakuraCount}")
     } else {
-        show("江ノ電 七里ヶ浜駅\n【鎌倉方面】\n{@lineK1}\n{@lineK2}\n\n【藤沢方面】\n{@lineF1}\n{@lineF2}")
+        show("江ノ電 七里ヶ浜駅\n【鎌倉方面】\n{@lineK1}\n{@lineK2}\n【藤沢方面】\n{@lineF1}\n{@lineF2}")
     }
 }
