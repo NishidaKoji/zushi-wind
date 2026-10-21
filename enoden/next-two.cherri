@@ -8,7 +8,8 @@
 
 // Read each invocation from official timetable; no cached services
 const downloaded = downloadURL("https://www.enoden.co.jp/train/station/kamakura/time-table/")
-@parts = splitText(downloaded, '<div class="time-schedule-row">')
+const html = "{downloaded}"
+@parts = splitText(html, '<div class="time-schedule-row">')
 @date = currentDate()
 @hTime = formatDate(@date, "Custom", "H")
 @mTime = formatDate(@date, "Custom", "m")
