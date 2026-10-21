@@ -98,8 +98,8 @@ def candidate_video_urls():
                     urls.append(url)
     except Exception as exc:
         print(f"公式ページの確認失敗: {exc}", file=sys.stderr)
-    if zushi_wind.VIDEO_URL not in urls:
-        urls.append(zushi_wind.VIDEO_URL)
+    if not urls:
+        raise RuntimeError("公式ページで風向風速計の配信を特定できません")
     return urls
 
 
@@ -210,10 +210,6 @@ def grab_frame_with_deno():
 
 zushi_wind.grab_frame = grab_frame_with_deno
 STATE.mkdir(exist_ok=True)
-old = ROOT / "wind.json"
-if old.exists():
-    shutil.copy2(old, STATE / "last.json")
-
 data = zushi_wind.sample()
 age = (datetime.now(timezone.utc) - datetime.fromtimestamp(int(data["ts"]), timezone.utc)).total_seconds()
 if not (0 <= age <= 900):
