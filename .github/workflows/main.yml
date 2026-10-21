@@ -126,3 +126,9 @@ jobs:
           git add watch.txt wind.json index.html
           git diff --cached --quiet || git commit -m "Update wind reading"
           git push
+
+      - name: Mark acquisition failure
+        if: steps.wind.outcome != 'success'
+        run: |
+          echo "風速取得失敗: watch.txt を取得停止表示に更新済み" >&2
+          exit 1
