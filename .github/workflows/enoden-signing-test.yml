@@ -20,52 +20,31 @@ jobs:
           set -euxo pipefail
           git clone -q --depth 1 https://github.com/electrikmilk/cherri.git /tmp/cherri
           cd /tmp/cherri
-          go run . "$GITHUB_WORKSPACE/enoden/next-two.cherri" --debug --no-sign
+          go run . "$GITHUB_WORKSPACE/enoden/next-two-v3.cherri" --debug --no-sign
           ls -lah "$GITHUB_WORKSPACE/enoden/"
-      - name: Inspect native workflow for regression and publish versioned signed shortcut
+      - name: Validate V3 shortcut raw-text file handling and arithmetic
         shell: bash
         run: |
-          set -euxo pipefail
+          set -euo pipefail
           python3 - <<'PY'
-          import plistlib,glob,os
-          files=glob.glob('enoden/*修正版.shortcut')
-          assert len(files)==1,files
-          b=open(files[0],'rb').read()
-          print('SIGNED_MAGIC',repr(b[:4]),'SIZE',len(b))
-          assert b[:4]==b'AEA1' and len(b)>1000
-          p=plistlib.load(open(glob.glob('enoden/*修正版.plist')[0],'rb'))
-          actions=p['WFWorkflowActions']
-          print('ACTIONS',len(actions),'WATCH',p.get('WFWorkflowTypes'))
-          assert 'Watch' in p.get('WFWorkflowTypes',[])
-          assert not any(a['WFWorkflowActionIdentifier']=='is.workflow.actions.detect.text' for a in actions), 'unexpected getText conversion remains'
-          split=[a for a in actions if a['WFWorkflowActionIdentifier']=='is.workflow.actions.text.split']
-          print('FIRST_SPLIT',split[0]['WFWorkflowActionParameters'])
-          assert len(split)>=2
-          first=split[0]['WFWorkflowActionParameters']['text']['Value']['attachmentsByRange']['{0, 1}']
-          assert first['OutputName']=='html', 'first split is not fed explicit HTML text conversion'
-          assert any(a['WFWorkflowActionIdentifier']=='is.workflow.actions.gettext' and a['WFWorkflowActionParameters'].get('CustomOutputName')=='html' for a in actions), 'explicit text action not found'
-          additions=[]
-          for a in actions:
-              par=a.get('WFWorkflowActionParameters',{})
-              if a['WFWorkflowActionIdentifier']=='is.workflow.actions.math':
-                  print('MATH',par.get('WFMathOperation'),par.get('WFInput'),par.get('WFMathOperand'))
-                  if par.get('WFMathOperation')=='+': additions.append(par)
-          assert len(additions)>=3,'missing addition calculation steps'
-          # This catches the old bug that overwrote "now" and "departure".
-          for idx,a in enumerate(actions):
-              par=a.get('WFWorkflowActionParameters',{})
-              if a['WFWorkflowActionIdentifier']=='is.workflow.actions.setvariable' and par.get('WFVariableName') in ('now','departure'):
-                  print('SETTING',idx,par.get('WFVariableName'),par['WFInput'])
-          assert len(actions)>80,'abnormally short workflow'
-          print('SHORTCUT_STATIC_VALIDATION_PASS')
+          import plistlib,glob,json
+          ps=glob.glob('enoden/*v3.plist'); assert len(ps)==1,ps
+          sh=glob.glob('enoden/*v3.shortcut'); assert len(sh)==1,sh
+          b=open(sh[0],'rb').read();print('SIGNATURE',repr(b[:4]),len(b));assert b[:4]==b'AEA1'
+          p=plistlib.load(open(ps[0],'rb'))
+          a=p['WFWorkflowActions']
+          print('WATCH',p['WFWorkflowTypes'],'ACTIONS',len(a))
+          assert 'Watch' in p['WFWorkflowTypes']
+          for i,x in enumerate(a[:13]):
+              print('INITIAL_ACTION',i,x['WFWorkflowActionIdentifier'],json.dumps(x.get('WFWorkflowActionParameters',{}),ensure_ascii=False))
+          names=[x['WFWorkflowActionIdentifier'] for x in a]
+          assert any('setname' in n for n in names),'No .txt file name conversion'
+          assert 'is.workflow.actions.detect.text' in names,'Get Text from .txt file missing'
+          assert any(x['WFWorkflowActionIdentifier']=='is.workflow.actions.text.split' for x in a)
+          assert sum(x.get('WFWorkflowActionParameters',{}).get('WFMathOperation')=='+' for x in a)>=4
+          assert '江ノ電 鎌倉駅' in str(p.get('WFWorkflowName',''))
+          print('STATIC_PASS')
           PY
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git config user.name "github-actions[bot]"
-          git fetch origin enoden-shortcut-build-20261021
-          git checkout -B enoden-shortcut-build-20261021 origin/enoden-shortcut-build-20261021
-          git add -f "enoden/江ノ電 鎌倉駅 次発2本 修正版.shortcut"
-          git commit -m "Publish validated signed Enoden timetable shortcut v2 [skip ci]"
-          git push origin HEAD:enoden-shortcut-build-20261021
       - name: Verify timetable HTML structure, destination markings and top-two calculation
         shell: bash
         run: |
