@@ -1,0 +1,152 @@
+#define name 江ノ電 七里ヶ浜駅 次発
+#define color orange
+#define glyph tram
+#define from watch, search
+#include 'actions/web'
+#include 'actions/text'
+#include 'actions/calendar'
+
+// Read the full official station timetable on each execution.
+const downloaded = downloadURL("https://www.enoden.co.jp/train/station/shichirigahama/time-table/")
+const renamed = setName(downloaded, "enoden-shichirigahama.txt", true)
+const html = getText(renamed)
+@htmlLength = count(html, "Characters")
+@rows = splitText(html, '<div class="time-schedule-row">')
+@nowDate = currentDate()
+@timeH = formatDate(@nowDate, "Custom", "H")
+@timeM = formatDate(@nowDate, "Custom", "m")
+@nowHour = number(@timeH)
+@nowMinute = number(@timeM)
+@now = @nowHour * 60
+@now = @now + @nowMinute
+@hoursCount = 0
+@fujisawaCount = 0
+@kamakuraCount = 0
+@bestF1 = 1500
+@bestF2 = 1500
+@bestK1 = 1500
+@bestK2 = 1500
+@lineF1 = ""
+@lineF2 = ""
+@lineK1 = ""
+@lineK2 = ""
+
+for row in @rows {
+    @hours = matchText('time-schedule-td-hour">([0-9]{1,2})', @row)
+    if @hours {
+        @hoursCount = @hoursCount + 1
+        @hourMatch = getFirstItem(@hours)
+        @hourStr = getMatchGroup(@hourMatch, 1)
+        @hour = number(@hourStr)
+        @hourPad = @hourStr
+        if @hour < 10 {
+            @hourPad = "0{@hourStr}"
+        }
+        @cols = splitText(@row, '<div class="time-schedule-td">')
+        @columnF = getListItem(@cols, 2)
+        @cellsF = splitText(@columnF, '<div class="time-schedule-minute">')
+        for cellF in @cellsF {
+            @matchesF = matchText('<p class="num">([0-9]{1,2})</p>', @cellF)
+            if @matchesF {
+                @fujisawaCount = @fujisawaCount + 1
+                @firstMatchF = getFirstItem(@matchesF)
+                @minuteStrF = getMatchGroup(@firstMatchF, 1)
+                @minuteF = number(@minuteStrF)
+                @destinationF = "藤沢行"
+                @markFEnoshima = matchText('<p class="num cap">江</p>', @cellF)
+                if @markFEnoshima {
+                    @destinationF = "江ノ島行"
+                }
+                @markFGokurakuji = matchText('<p class="num cap">極</p>', @cellF)
+                if @markFGokurakuji {
+                    @destinationF = "極楽寺行"
+                }
+                @markFInamuragasaki = matchText('<p class="num cap">稲</p>', @cellF)
+                if @markFInamuragasaki {
+                    @destinationF = "稲村ヶ崎行"
+                }
+                @minutePadF = @minuteStrF
+                if @minuteF < 10 {
+                    @minutePadF = "0{@minuteStrF}"
+                }
+                @departureF = @hour * 60
+                @departureF = @departureF + @minuteF
+                @deltaF = @departureF - @now
+                if @deltaF <= 0 {
+                    @deltaF = @deltaF + 1440
+                }
+                @displayF = "{@hourPad}:{@minutePadF} {@destinationF} あと約{@deltaF}分"
+                @compareF1 = @deltaF - @bestF1
+                if @compareF1 < 0 {
+                    @bestF2 = @bestF1
+                    @lineF2 = @lineF1
+                    @bestF1 = @deltaF
+                    @lineF1 = @displayF
+                } else {
+                    @compareF2 = @deltaF - @bestF2
+                    if @compareF2 < 0 {
+                        @bestF2 = @deltaF
+                        @lineF2 = @displayF
+                    }
+                }
+            }
+        }
+        @columnK = getListItem(@cols, 3)
+        @cellsK = splitText(@columnK, '<div class="time-schedule-minute">')
+        for cellK in @cellsK {
+            @matchesK = matchText('<p class="num">([0-9]{1,2})</p>', @cellK)
+            if @matchesK {
+                @kamakuraCount = @kamakuraCount + 1
+                @firstMatchK = getFirstItem(@matchesK)
+                @minuteStrK = getMatchGroup(@firstMatchK, 1)
+                @minuteK = number(@minuteStrK)
+                @destinationK = "鎌倉行"
+                @markKEnoshima = matchText('<p class="num cap">江</p>', @cellK)
+                if @markKEnoshima {
+                    @destinationK = "江ノ島行"
+                }
+                @markKGokurakuji = matchText('<p class="num cap">極</p>', @cellK)
+                if @markKGokurakuji {
+                    @destinationK = "極楽寺行"
+                }
+                @markKInamuragasaki = matchText('<p class="num cap">稲</p>', @cellK)
+                if @markKInamuragasaki {
+                    @destinationK = "稲村ヶ崎行"
+                }
+                @minutePadK = @minuteStrK
+                if @minuteK < 10 {
+                    @minutePadK = "0{@minuteStrK}"
+                }
+                @departureK = @hour * 60
+                @departureK = @departureK + @minuteK
+                @deltaK = @departureK - @now
+                if @deltaK <= 0 {
+                    @deltaK = @deltaK + 1440
+                }
+                @displayK = "{@hourPad}:{@minutePadK} {@destinationK} あと約{@deltaK}分"
+                @compareK1 = @deltaK - @bestK1
+                if @compareK1 < 0 {
+                    @bestK2 = @bestK1
+                    @lineK2 = @lineK1
+                    @bestK1 = @deltaK
+                    @lineK1 = @displayK
+                } else {
+                    @compareK2 = @deltaK - @bestK2
+                    if @compareK2 < 0 {
+                        @bestK2 = @deltaK
+                        @lineK2 = @displayK
+                    }
+                }
+            }
+        }
+    }
+}
+if @bestF2 == 1500 {
+    show("江ノ電 七里ヶ浜駅\n時刻表を読み取れませんでした。\n取得文字：{@htmlLength}／時間帯：{@hoursCount}\n藤沢方面：{@fujisawaCount}／鎌倉方面：{@kamakuraCount}")
+} else {
+    if @bestK2 == 1500 {
+        show("江ノ電 七里ヶ浜駅\n時刻表を読み取れませんでした。\n取得文字：{@htmlLength}／時間帯：{@hoursCount}\n藤沢方面：{@fujisawaCount}／鎌倉方面：{@kamakuraCount}")
+    } else {
+        show("江ノ電 七里ヶ浜駅\n【鎌倉方面】\n{@lineK1}\n{@lineK2}\n\n【藤沢方面】\n{@lineF1}\n{@lineF2}")
+    }
+}
