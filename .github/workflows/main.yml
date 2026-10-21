@@ -104,8 +104,8 @@ jobs:
               latest = datetime.fromtimestamp(int(data["ts"]), ZoneInfo("Asia/Tokyo")).strftime("%m/%d %H:%M")
           except (OSError, KeyError, ValueError, TypeError, OverflowError):
               pass
-          body = f"逗子マリーナ\\n風速データ取得停止中\\n最終取得 {latest}\\n現在の風速は確認できません"
-          (root / "watch.txt").write_text(body + "\\n", encoding="utf-8")
+          body = f"逗子マリーナ\n風速データ取得停止中\n最終取得 {latest}\n現在の風速は確認できません"
+          (root / "watch.txt").write_text(body + "\n", encoding="utf-8")
           (root / "index.html").write_text(
               "<!doctype html><meta charset='utf-8'><meta name='viewport' content='width=device-width'>"
               "<title>逗子マリーナ風速</title><style>body{font:22px system-ui;white-space:pre-line;"
