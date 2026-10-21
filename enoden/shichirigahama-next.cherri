@@ -44,7 +44,8 @@ for row in @rows {
         }
         @cols = splitText(@row, '<div class="time-schedule-td">')
         @columnF = getListItem(@cols, 2)
-        @cellsF = splitText(@columnF, '<div class="time-schedule-minute">')
+        @columnTextF = "{@columnF}"
+        @cellsF = splitText(@columnTextF, '<div class="time-schedule-minute">')
         for cellF in @cellsF {
             @matchesF = matchText('<p class="num">([0-9]{1,2})</p>', @cellF)
             if @matchesF {
@@ -92,7 +93,8 @@ for row in @rows {
             }
         }
         @columnK = getListItem(@cols, 3)
-        @cellsK = splitText(@columnK, '<div class="time-schedule-minute">')
+        @columnTextK = "{@columnK}"
+        @cellsK = splitText(@columnTextK, '<div class="time-schedule-minute">')
         for cellK in @cellsK {
             @matchesK = matchText('<p class="num">([0-9]{1,2})</p>', @cellK)
             if @matchesK {
