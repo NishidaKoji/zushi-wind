@@ -1,0 +1,90 @@
+#define name 江ノ電 鎌倉駅 次発2本 v5
+#define color orange
+#define glyph tram
+#define from watch, search
+#include 'actions/web'
+#include 'actions/text'
+#include 'actions/calendar'
+
+// Read each invocation from official timetable; no cached services
+const downloaded = downloadURL("https://www.enoden.co.jp/train/station/kamakura/time-table/")
+const renamed = setName(downloaded, "enoden-kamakura.txt", true)
+const html = getText(renamed)
+@sourceType = typeOf(renamed)
+@htmlLength = count(html, "Characters")
+@parts = splitText(html, '<div class="time-schedule-row">')
+@date = currentDate()
+@hTime = formatDate(@date, "Custom", "H")
+@mTime = formatDate(@date, "Custom", "m")
+@nowH = number(@hTime)
+@nowM = number(@mTime)
+@now = @nowH * 60
+@now = @now + @nowM
+@hourCount = 0
+@serviceCount = 0
+@best1 = 1500
+@best2 = 1500
+@line1 = ""
+@line2 = ""
+
+for row in @parts {
+    @hours = matchText('time-schedule-td-hour">([0-9]{1,2})', @row)
+    if @hours {
+        @hourCount = @hourCount + 1
+        @hourMatch = getFirstItem(@hours)
+        @hstr = getMatchGroup(@hourMatch, 1)
+        @h = number(@hstr)
+        @cells = splitText(@row, '<div class="time-schedule-minute">')
+        for cell in @cells {
+            @minutes = matchText('<p class="num">([0-9]{1,2})</p>', @cell)
+            if @minutes {
+                @serviceCount = @serviceCount + 1
+                @minuteMatch = getFirstItem(@minutes)
+                @mstr = getMatchGroup(@minuteMatch, 1)
+                @m = number(@mstr)
+                @dest = "藤沢行"
+                @markerEnoshima = matchText('<p class="num cap">江</p>', @cell)
+                if @markerEnoshima {
+                    @dest = "江ノ島行"
+                }
+                @markerGokurakuji = matchText('<p class="num cap">極</p>', @cell)
+                if @markerGokurakuji {
+                    @dest = "極楽寺行"
+                }
+                @markerInamuragasaki = matchText('<p class="num cap">稲</p>', @cell)
+                if @markerInamuragasaki {
+                    @dest = "稲村ヶ崎行"
+                }
+                @pad = @mstr
+                if @m < 10 {
+                    @pad = "0{@mstr}"
+                }
+                @departure = @h * 60
+                @departure = @departure + @m
+                @delta = @departure - @now
+                if @delta <= 0 {
+                    @delta = @delta + 1440
+                }
+                @display = "{@hstr}:{@pad} {@dest} あと約{@delta}分"
+                @compareFirst = @delta - @best1
+                if @compareFirst < 0 {
+                    @best2 = @best1
+                    @line2 = @line1
+                    @best1 = @delta
+                    @line1 = @display
+                } else {
+                    @compareSecond = @delta - @best2
+                    if @compareSecond < 0 {
+                        @best2 = @delta
+                        @line2 = @display
+                    }
+                }
+            }
+        }
+    }
+}
+if @best2 == 1500 {
+    show("江ノ電 鎌倉駅\n公式時刻表の解析に失敗しました。\n取得文字：{@htmlLength}／時間帯：{@hourCount}／便：{@serviceCount}\n入力形式：{@sourceType}\n時刻は表示しません。")
+} else {
+    show("江ノ電 鎌倉駅 →\n{@line1}\n{@line2}\n※定刻・毎回公式サイト取得")
+}
