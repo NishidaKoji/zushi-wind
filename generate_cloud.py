@@ -9,6 +9,7 @@ import html
 import json
 import os
 import platform
+import re
 import shutil
 import subprocess
 import sys
@@ -78,14 +79,37 @@ ensure_yt_dlp_and_deno()
 import zushi_wind_cloud as zushi_wind
 
 
+def candidate_video_urls():
+    """Read the official Riviera anemometer embed instead of trusting a permanent video ID."""
+    page = "https://www.riviera.co.jp/area/zushi/livecamera/"
+    urls = []
+    try:
+        request = urllib.request.Request(page, headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(request, timeout=15) as response:
+            html_text = response.read().decode("utf-8", "replace")
+        section = html_text.find("風向風速計")
+        matches = re.findall(
+            r"(?:youtube\\.com/(?:embed/|watch\\?v=)|youtu\\.be/)([A-Za-z0-9_-]{11})",
+            html_text,
+        )
+        # The anemometer embed normally comes after the camera embed.
+        for video_id in reversed(matches):
+            link = "https://www.youtube.com/watch?v=" + video_id
+            if link not in urls:
+                urls.append(link)
+    except Exception as exc:
+        print(f"公式ページから動画IDを取得できません: {exc}", file=sys.stderr)
+    # Channel live is useful if Riviera replaced the static video embed.
+    urls.append("https://www.youtube.com/@rivieraofficial8715/live")
+    if zushi_wind.VIDEO_URL not in urls:
+        urls.append(zushi_wind.VIDEO_URL)
+    return urls
+
+
 def resolve_youtube_stream(deno):
     cookie_file = os.environ.get("YOUTUBE_COOKIES_FILE")
-    if not cookie_file or not Path(cookie_file).is_file():
-        raise RuntimeError("GitHub Secret YOUTUBE_COOKIES_B64 が未設定です")
     common = [
         "yt-dlp",
-        "--cookies",
-        cookie_file,
         "--js-runtimes",
         f"deno:{deno}",
         "--remote-components",
@@ -97,6 +121,8 @@ def resolve_youtube_stream(deno):
         "-f",
         "best*[height<=720]/best*",
     ]
+    if cookie_file and Path(cookie_file).is_file():
+        common.extend(["--cookies", cookie_file])
     attempts = [
         "youtube:player_client=default,mweb",
         "youtube:player_client=default,android;formats=missing_pot",
@@ -104,19 +130,20 @@ def resolve_youtube_stream(deno):
         "youtube:player_client=tv_downgraded",
     ]
     errors = []
-    for extractor_args in attempts:
-        try:
-            output = run_text(
-                common
-                + ["--extractor-args", extractor_args, zushi_wind.VIDEO_URL],
-                90,
-            )
-            urls = [line.strip() for line in output.splitlines() if line.startswith("http")]
-            if urls:
-                return urls[0]
-            errors.append(f"{extractor_args}: URLなし")
-        except Exception as exc:
-            errors.append(f"{extractor_args}: {exc}")
+    candidates = candidate_video_urls()
+    for candidate in candidates:
+        for extractor_args in attempts:
+            try:
+                output = run_text(
+                    common + ["--extractor-args", extractor_args, candidate], 45,
+                )
+                urls = [line.strip() for line in output.splitlines() if line.startswith("http")]
+                if urls:
+                    print(f"映像取得元: {candidate}", file=sys.stderr)
+                    return urls[0]
+                errors.append(f"{candidate} {extractor_args}: URLなし")
+            except Exception as exc:
+                errors.append(f"{candidate} {extractor_args}: {exc}")
 
     # Anonymous mirror fallback. No account cookies or credentials are used.
     # Current public instances listed by the Piped project.  Instances come
@@ -140,7 +167,7 @@ def resolve_youtube_stream(deno):
     ):
         try:
             request = urllib.request.Request(
-                f"{base}/streams/41UP1WsRBKw",
+                f"{base}/streams/{candidates[0].split('v=')[-1]}",
                 headers={"User-Agent": "zushi-wind/2"},
             )
             with urllib.request.urlopen(request, timeout=18) as response:
