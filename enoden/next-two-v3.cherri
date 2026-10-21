@@ -10,6 +10,7 @@
 const downloaded = downloadURL("https://www.enoden.co.jp/train/station/kamakura/time-table/")
 const renamed = setName(downloaded, "enoden-kamakura.txt", true)
 const html = getText(renamed)
+@sourceType = typeOf(renamed)
 @htmlLength = count(html, "Characters")
 @parts = splitText(html, '<div class="time-schedule-row">')
 @date = currentDate()
@@ -78,7 +79,7 @@ for row in @parts {
     }
 }
 if @best2 == 1500 {
-    show("江ノ電 鎌倉駅\n公式時刻表の解析に失敗しました。\n取得文字：{@htmlLength}／時間帯：{@hourCount}／便：{@serviceCount}\n時刻は表示しません。")
+    show("江ノ電 鎌倉駅\n公式時刻表の解析に失敗しました。\n取得文字：{@htmlLength}／時間帯：{@hourCount}／便：{@serviceCount}\n入力形式：{@sourceType}\n時刻は表示しません。")
 } else {
     show("江ノ電 鎌倉駅 →\n{@line1}\n{@line2}\n※定刻・毎回公式サイト取得")
 }
