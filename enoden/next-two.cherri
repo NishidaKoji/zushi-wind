@@ -1,4 +1,4 @@
-#define name 江ノ電 鎌倉駅 次発2本
+#define name 江ノ電 鎌倉駅 次発2本 修正版
 #define color orange
 #define glyph tram
 #define from watch, search
@@ -8,15 +8,15 @@
 
 // Read each invocation from official timetable; no cached services
 const downloaded = downloadURL("https://www.enoden.co.jp/train/station/kamakura/time-table/")
-const html = getText(downloaded)
-@parts = splitText(html, '<div class="time-schedule-row">')
+@parts = splitText(downloaded, '<div class="time-schedule-row">')
 @date = currentDate()
 @hTime = formatDate(@date, "Custom", "H")
 @mTime = formatDate(@date, "Custom", "m")
 @nowH = number(@hTime)
 @nowM = number(@mTime)
 @now = @nowH * 60
-@now += @nowM
+@now = @now + @nowM
+@serviceCount = 0
 @best1 = 1500
 @best2 = 1500
 @line1 = ""
@@ -32,6 +32,7 @@ for row in @parts {
         for cell in @cells {
             @minutes = matchText('<p class="num">([0-9]{1,2})</p>', @cell)
             if @minutes {
+                @serviceCount += 1
                 @minuteMatch = getFirstItem(@minutes)
                 @mstr = getMatchGroup(@minuteMatch, 1)
                 @m = number(@mstr)
@@ -50,7 +51,7 @@ for row in @parts {
                     @pad = "0{@mstr}"
                 }
                 @departure = @h * 60
-                @departure += @m
+                @departure = @departure + @m
                 @delta = @departure - @now
                 if @delta <= 0 {
                     @delta += 1440
@@ -72,7 +73,7 @@ for row in @parts {
     }
 }
 if @best2 == 1500 {
-    show("江ノ電 鎌倉駅\n公式時刻表の解析に失敗しました。\n時刻は表示しません。")
+    show("江ノ電 鎌倉駅\n公式時刻表の解析に失敗しました。\n読取件数：{@serviceCount}\n時刻は表示しません。")
 } else {
     show("江ノ電 鎌倉駅 →\n{@line1}\n{@line2}\n※定刻・毎回公式サイト取得")
 }
