@@ -1,0 +1,143 @@
+name: Shichirigahama next 2 each direction — signed shortcut
+on:
+  push:
+    branches: [enoden-shortcut-build-20261021]
+    paths:
+      - 'enoden/shichirigahama-next.cherri'
+      - '.github/workflows/shichirigahama-build.yml'
+  workflow_dispatch:
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build and sign native Shortcut
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone -q --depth 1 https://github.com/electrikmilk/cherri.git /tmp/cherri
+          cd /tmp/cherri
+          go run . "$GITHUB_WORKSPACE/enoden/shichirigahama-next.cherri" --debug --no-sign
+      - name: Check generated Apple actions and all parameters
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import plistlib,glob,os,json
+          ps=glob.glob('enoden/江ノ電 七里ヶ浜駅 次発.plist')
+          fs=glob.glob('enoden/江ノ電 七里ヶ浜駅 次発.shortcut')
+          assert len(ps)==1 and len(fs)==1,(ps,fs)
+          sig=open(fs[0],'rb').read()
+          print('SIGNED_MAGIC',repr(sig[:4]),'SIGNED_BYTES',len(sig))
+          assert sig[:4]==b'AEA1' and len(sig)>5000
+          workflow=plistlib.load(open(ps[0],'rb'))
+          acts=workflow['WFWorkflowActions']
+          print('TOTAL_ACTIONS',len(acts),'TYPES',workflow.get('WFWorkflowTypes'))
+          assert 'Watch' in workflow.get('WFWorkflowTypes',[])
+          assert len(acts)>100
+          assert acts[0]['WFWorkflowActionIdentifier']=='is.workflow.actions.downloadurl'
+          assert acts[0]['WFWorkflowActionParameters']['WFURL']=='https://www.enoden.co.jp/train/station/shichirigahama/time-table/'
+          splits=[a['WFWorkflowActionParameters']['WFTextCustomSeparator'] for a in acts if a['WFWorkflowActionIdentifier']=='is.workflow.actions.text.split']
+          print('SPLITS',splits)
+          assert '<div class="time-schedule-row">' in splits
+          assert '<div class="time-schedule-td">' in splits
+          assert '<div class="time-schedule-minute">' in splits
+          indexes=[]
+          for i,a in enumerate(acts):
+              par=a.get('WFWorkflowActionParameters',{})
+              if a['WFWorkflowActionIdentifier']=='is.workflow.actions.getitemfromlist' and par.get('WFItemSpecifier')=='Item At Index':
+                  print('GET_COL',i,par)
+                  indexes.append(par)
+          print('COLUMN_INDEX_ACTIONS',len(indexes))
+          assert len(indexes)==2,'Exactly two direction column selections are expected'
+          patterns=[a.get('WFWorkflowActionParameters',{}).get('WFMatchTextPattern','') for a in acts if a['WFWorkflowActionIdentifier']=='is.workflow.actions.text.match']
+          for tag in ['江','極','稲']:
+              p='<p class="num cap">'+tag+'</p>'
+              assert patterns.count(p)==2,(p,patterns)
+          assert patterns.count('<p class="num">([0-9]{1,2})</p>')==2
+          checks=[]
+          for i,a in enumerate(acts):
+              par=a.get('WFWorkflowActionParameters',{})
+              if a['WFWorkflowActionIdentifier']=='is.workflow.actions.conditional' and par.get('WFControlFlowMode')==0:
+                  op=par.get('WFCondition')
+                  checks.append(op)
+                  if op in [0,1,2,3,4,5]:
+                      assert 'WFNumberValue' in par, f'Invalid numeric IF at action {i}: {par}'
+                      assert 'WFConditionalActionString' not in par
+                  elif op==100:
+                      assert 'WFInput' in par, f'Empty IF at action {i}'
+                  else: raise AssertionError(f'Unrecognized or missing IF parameters {i}: {par}')
+          print('IF_OPERATORS',checks)
+          assert len(checks)>=12
+          outputs=[a.get('WFWorkflowActionParameters',{}).get('Text') for a in acts if a['WFWorkflowActionIdentifier']=='is.workflow.actions.showresult']
+          assert len(outputs)==3
+          display=json.dumps(outputs,ensure_ascii=False)
+          assert '【鎌倉方面】' in display and '【藤沢方面】' in display
+          assert 'v6' not in display and '公式サイト取得' not in display
+          math=[a.get('WFWorkflowActionParameters',{}).get('WFMathOperation') for a in acts if a['WFWorkflowActionIdentifier']=='is.workflow.actions.math']
+          print('MATH_OPS',math)
+          assert math.count('+')>=7 and math.count('-')>=6
+          print('ALL_ACTION_PARAMETERS_PASS')
+          PY
+      - name: Verify live timetable parsing and boundary cases
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import urllib.request,re
+          url='https://www.enoden.co.jp/train/station/shichirigahama/time-table/'
+          req=urllib.request.Request(url,headers={'User-Agent':'Mozilla/5.0','Cache-Control':'no-cache'})
+          response=urllib.request.urlopen(req,timeout=30)
+          page=response.read().decode('utf-8','replace')
+          print('HTTP',response.status,'LEN',len(page))
+          counts=[]
+          rows=page.split('<div class="time-schedule-row">')
+          depts={'藤沢方面':[],'鎌倉方面':[]}
+          for row in rows:
+              hr=re.search(r'time-schedule-td-hour">([0-9]{1,2})',row)
+              if not hr:continue
+              h=int(hr.group(1))
+              cols=row.split('<div class="time-schedule-td">')
+              assert len(cols)>=3,f'No both direction columns for hour {h}'
+              for index,direction,default in [(1,'藤沢方面','藤沢行'),(2,'鎌倉方面','鎌倉行')]:
+                  for cell in cols[index].split('<div class="time-schedule-minute">'):
+                      mm=re.search(r'<p class="num">([0-9]{1,2})</p>',cell)
+                      if not mm:continue
+                      m=int(mm.group(1))
+                      assert 0<=m<60
+                      dest=default
+                      if re.search('<p class="num cap">江</p>',cell): dest='江ノ島行'
+                      if re.search('<p class="num cap">極</p>',cell): dest='極楽寺行'
+                      if re.search('<p class="num cap">稲</p>',cell): dest='稲村ヶ崎行'
+                      depts[direction].append((h*60+m,dest))
+          print('LIVE_DEPARTURE_COUNTS', {k:len(v) for k,v in depts.items()})
+          assert all(len(v)>2 for v in depts.values())
+          assert (5*60+39,'藤沢行') in depts['藤沢方面']
+          assert (5*60+17,'鎌倉行') in depts['鎌倉方面']
+          assert (22*60+39,'江ノ島行') in depts['藤沢方面']
+          assert (23*60+53,'江ノ島行') in depts['藤沢方面']
+          assert (21*60+34,'極楽寺行') in depts['鎌倉方面']
+          for h,m in [(0,58),(1,16),(5,10),(9,59),(21,28),(22,35),(23,40)]:
+              now=h*60+m
+              print('CURRENT',f'{h:02}:{m:02}')
+              for label,all_depts in depts.items():
+                  top=sorted(((t-now)%1440 or 1440,t,d) for t,d in all_depts)[:2]
+                  assert len(top)==2, 'Two departures not found'
+                  assert 0<top[0][0]<=top[1][0]<=1440
+                  print(' ',label,top)
+          print('BOTH_DIRECTIONS_LIVE_PASS')
+          PY
+      - name: Publish signed file without changing production wind meter
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git config user.name 'github-actions[bot]'
+          git fetch origin enoden-shortcut-build-20261021
+          git checkout -B enoden-shortcut-build-20261021 origin/enoden-shortcut-build-20261021
+          git add -f 'enoden/江ノ電 七里ヶ浜駅 次発.shortcut'
+          git commit -m 'Add signed Seven Beach departures Shortcut [skip ci]'
+          git push origin HEAD:enoden-shortcut-build-20261021
+          echo 'PUBLISHED_SIGNED_SHICHIRIGAHAMA=true'
