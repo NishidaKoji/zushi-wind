@@ -14,7 +14,7 @@ import subprocess
 import sys
 import urllib.request
 import zipfile
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -191,6 +191,9 @@ if old.exists():
     shutil.copy2(old, STATE / "last.json")
 
 data = zushi_wind.sample()
+age = (datetime.now(timezone.utc) - datetime.fromtimestamp(int(data["ts"]), timezone.utc)).total_seconds()
+if not (0 <= age <= 900):
+    raise RuntimeError(f"観測データの時刻が不正または15分以上古いです: age={age:.0f}秒")
 (ROOT / "wind.json").write_text(
     json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
 )
@@ -200,7 +203,7 @@ def fmt(value):
     return "?" if value is None else f"{float(value):.1f}"
 
 
-when = datetime.fromtimestamp(data["ts"], ZoneInfo("Asia/Tokyo")).strftime("%H:%M")
+when = datetime.fromtimestamp(data["ts"], ZoneInfo("Asia/Tokyo")).strftime("%m/%d %H:%M")
 body = (
     f"逗子マリーナ {when}取得\n"
     f"現在 {fmt(data.get('speed'))}m/s {data.get('direction', '?')}\n"
