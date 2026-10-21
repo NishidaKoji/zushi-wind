@@ -5,6 +5,11 @@ on:
     paths:
       - 'enoden/next-two-v5.cherri'
       - '.github/workflows/enoden-v5-build.yml'
+  push:
+    branches: [enoden-shortcut-build-20261021]
+    paths:
+      - 'enoden/next-two-v5.cherri'
+      - '.github/workflows/enoden-v5-build.yml'
   workflow_dispatch:
 jobs:
   build:
