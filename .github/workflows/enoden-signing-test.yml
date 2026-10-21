@@ -37,11 +37,24 @@ jobs:
           p={'WFWorkflowActions':[{'WFWorkflowActionIdentifier':'is.workflow.actions.gettext','WFWorkflowActionParameters':{'UUID':str(uuid.uuid4()).upper(),'WFTextActionText':'Enoden signing check'}}], 'WFWorkflowClientVersion':'3036.0.4','WFWorkflowHasOutputFallback':False,'WFWorkflowHasShortcutInputVariables':False,'WFWorkflowIcon':{'WFWorkflowIconStartColor':4282601983,'WFWorkflowIconGlyphNumber':59845},'WFWorkflowImportQuestions':[],'WFWorkflowInputContentItemClasses':[],'WFWorkflowMinimumClientVersion':900,'WFWorkflowMinimumClientVersionString':'900','WFWorkflowName':'江ノ電署名確認','WFWorkflowOutputContentItemClasses':[],'WFWorkflowTypes':[]}
           open('test.wflow','wb').write(plistlib.dumps(p))
           PY
-          cp test.wflow test.shortcut
-          curl -L --retry 2 --connect-timeout 10 --max-time 45 -sS \
-            -F "file=@test.shortcut" \
-            -w '\nSigning HTTP %{http_code}; returned %{size_download} bytes\n' \
-            'https://sign.shortcuty.app/api/v1/sign' -o signed-test.shortcut
+          python3 - <<'PY'
+          import urllib.request,json
+          p=open('test.wflow','rb').read().decode('utf-8')
+          body=json.dumps({'shortcutName':'江ノ電署名確認','shortcut':p},ensure_ascii=False).encode('utf-8')
+          req=urllib.request.Request('https://hubsign.routinehub.services/sign',
+              data=body,headers={'Content-Type':'application/json',
+              'Origin':'https://routinehub.co','Referer':'https://routinehub.co/',
+              'User-Agent':'Mozilla/5.0'},method='POST')
+          try:
+              resp=urllib.request.urlopen(req,timeout=40)
+              data=resp.read()
+              print('HubSign HTTP',resp.status,'type',resp.headers.get('Content-Type'),'magic',repr(data[:6]))
+          except urllib.error.HTTPError as ex:
+              data=ex.read()
+              print('HubSign HTTP error',ex.code,'body preview',repr(data[:350]))
+              raise
+          open('signed-test.shortcut','wb').write(data)
+          PY
           file signed-test.shortcut
           ls -l signed-test.shortcut
           python3 - <<'PY'
