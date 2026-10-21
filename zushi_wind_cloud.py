@@ -3,7 +3,6 @@
 import json, math, os, re, subprocess, tempfile, time
 from collections import Counter
 from pathlib import Path
-from urllib.request import Request, urlopen
 
 BASE = Path(os.environ.get("ZUSHI_BASE", str(Path.home() / ".zushi_wind")))
 FRAME, LAST = BASE / "frame.jpg", BASE / "last.json"
@@ -39,51 +38,7 @@ def load_last():
         return {}
 
 def grab_frame():
-    # GitHub-hosted runners are commonly blocked by YouTube's bot check.
-    # Resolve the public live HLS URL through a Piped instance first, without
-    # sending any Google account cookie or other user credential.
-    stream_url = None
-    api_errors = []
-    for base in (
-        "https://pipedapi.kavin.rocks",
-        "https://pipedapi.leptons.xyz",
-        "https://pipedapi.nosebs.ru",
-    ):
-        try:
-            req = Request(
-                f"{base}/streams/41UP1WsRBKw",
-                headers={"User-Agent": "zushi-wind/1.0"},
-            )
-            with urlopen(req, timeout=35) as response:
-                info = json.load(response)
-            stream_url = info.get("hls")
-            if not stream_url:
-                streams = info.get("videoStreams") or []
-                streams = [s for s in streams if s.get("url")]
-                if streams:
-                    stream_url = max(streams, key=lambda s: s.get("height") or 0)["url"]
-            if stream_url:
-                break
-        except Exception as exc:
-            api_errors.append(f"{base}: {exc}")
-    if not stream_url:
-        try:
-            out = run([
-                "yt-dlp", "--js-runtimes", "node",
-                "--extractor-args", "youtube:player_client=tv",
-                "-g", "-f", "best*", "--no-warnings", VIDEO_URL,
-            ], 60).stdout.decode().splitlines()
-            stream_url = out[0] if out else None
-        except Exception as exc:
-            api_errors.append(f"yt-dlp: {exc}")
-    if not stream_url:
-        raise RuntimeError("ライブ映像URLを取得できません: " + " | ".join(api_errors))
-    tmp = FRAME.with_suffix(".new.jpg")
-    run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-i", stream_url,
-         "-vf", "scale=640:360:flags=lanczos", "-frames:v", "1", "-q:v", "2", str(tmp)], 60)
-    if tmp.stat().st_size < 5000:
-        raise RuntimeError("取得画像が不完全です")
-    tmp.replace(FRAME)
+    raise RuntimeError("cloud runner must provide current official livestream frame")
 
 def parse_number(text):
     s = text.replace(",", ".").replace(" ", "").replace("O", "0").replace("o", "0")
