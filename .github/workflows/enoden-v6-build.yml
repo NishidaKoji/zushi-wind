@@ -1,0 +1,113 @@
+name: Enoden v6 native shortcut verified build
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'enoden/next-two-v6.cherri'
+      - '.github/workflows/enoden-v6-build.yml'
+  push:
+    branches: [enoden-shortcut-build-20261021]
+    paths:
+      - 'enoden/next-two-v6.cherri'
+      - '.github/workflows/enoden-v6-build.yml'
+  workflow_dispatch:
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile and sign native watch shortcut
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone -q --depth 1 https://github.com/electrikmilk/cherri.git /tmp/cherri
+          cd /tmp/cherri
+          go run . "$GITHUB_WORKSPACE/enoden/next-two-v6.cherri" --debug --no-sign
+      - name: Inspect every generated conditional and signing format
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import plistlib,glob,os,json
+          ps=glob.glob('enoden/*v6.plist')
+          fs=glob.glob('enoden/*v6.shortcut')
+          assert len(ps)==1 and len(fs)==1,(ps,fs)
+          b=open(fs[0],'rb').read()
+          print('MAGIC',repr(b[:4]),'SIZE',len(b))
+          assert b[:4] == b'AEA1' and len(b)>5000
+          p=plistlib.load(open(ps[0],'rb'))
+          actions=p['WFWorkflowActions']
+          print('ACTIONS',len(actions),'TYPES',p.get('WFWorkflowTypes'))
+          assert 'Watch' in p.get('WFWorkflowTypes',[])
+          checks=[]
+          for i,act in enumerate(actions):
+              name=act['WFWorkflowActionIdentifier']
+              par=act.get('WFWorkflowActionParameters',{})
+              if name=='is.workflow.actions.text.match':
+                  checks.append(par.get('WFMatchTextPattern',''))
+              if name=='is.workflow.actions.conditional' and par.get('WFControlFlowMode')==0:
+                  typ=par.get('WFCondition')
+                  print('IF',i,'CONDITION',typ,'KEYS',list(par.keys()),'PARAM',par.get('WFConditionalActionString',par.get('WFNumberValue')))
+                  assert typ != 99, f'Unsupported Contains conditional still present at action {i}'
+                  if typ in (0,1,2,3,4,5):
+                      assert 'WFNumberValue' in par, f'Missing numeric parameter at action {i}'
+                      assert 'WFConditionalActionString' not in par, f'Text parameter in numeric condition at {i}'
+                  elif typ==100:
+                      assert 'WFInput' in par
+                  else:
+                      raise AssertionError(f'Unexpected condition {typ} at {i}')
+          for tag in ['江','極','稲']:
+              expect = '<p class="num cap">'+tag+'</p>'
+              assert expect in checks, 'Marker matching regex not found: '+tag
+          assert sum(x['WFWorkflowActionIdentifier']=='is.workflow.actions.text.match' for x in actions)>=5
+          assert sum(x.get('WFWorkflowActionParameters',{}).get('WFMathOperation')=='+' for x in actions)>=4
+          assert 'is.workflow.actions.detect.text' in [x['WFWorkflowActionIdentifier'] for x in actions]
+          texts=[x.get('WFWorkflowActionParameters',{}).get('Text') for x in actions if x['WFWorkflowActionIdentifier']=='is.workflow.actions.showresult']
+          assert len(texts)>=2
+          raw=str(texts)
+          assert '※定刻・毎回公式サイト取得' not in raw
+          assert '江ノ電 鎌倉駅' in raw
+          print('FOOTER_REMOVED_VALIDATED')
+          print('ALL_CONDITIONS_VALIDATED')
+          PY
+      - name: Verify live official timetable parsing and next two
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import urllib.request,re
+          req=urllib.request.Request('https://www.enoden.co.jp/train/station/kamakura/time-table/',headers={'User-Agent':'Mozilla/5.0','Cache-Control':'no-cache'})
+          html=urllib.request.urlopen(req,timeout=25).read().decode('utf-8','replace')
+          entries=[]
+          for row in html.split('<div class="time-schedule-row">'):
+              h=re.search(r'time-schedule-td-hour">([0-9]{1,2})',row)
+              if not h: continue
+              for cell in row.split('<div class="time-schedule-minute">'):
+                  m=re.search(r'<p class="num">([0-9]{1,2})</p>',cell)
+                  if not m: continue
+                  tags=re.findall(r'<p class="num cap">([江極稲])</p>',cell)
+                  dest = {'江':'江ノ島','極':'極楽寺','稲':'稲村ヶ崎'}.get(tags[0] if tags else '', '藤沢')
+                  entries.append((int(h.group(1))*60+int(m.group(1)),dest))
+          assert len(entries)>2
+          assert (22*60+24,'江ノ島') in entries and (23*60+38,'江ノ島') in entries
+          for hh,mm in [(0,58),(1,6),(5,19),(9,59),(22,9),(23,41)]:
+              now=hh*60+mm
+              top=sorted((((t-now)%1440 or 1440,t,d) for t,d in entries))[:2]
+              assert len(top)==2
+              print(f'TEST {hh:02}:{mm:02}',top)
+          print('SOURCE_SERVICE_COUNT',len(entries),'LIVE_PARSER_PASS')
+          PY
+      - name: Publish signed v6 only to isolated branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git config user.name 'github-actions[bot]'
+          git fetch origin enoden-shortcut-build-20261021
+          git checkout -B enoden-shortcut-build-20261021 origin/enoden-shortcut-build-20261021
+          git add -f 'enoden/江ノ電 鎌倉駅 次発2本 v6.shortcut'
+          git commit -m 'Add signed Enoden shortcut v6 without Contains parameters [skip ci]'
+          git push origin HEAD:enoden-shortcut-build-20261021
+          echo 'PUBLISHED_SIGNED_V6=true'
