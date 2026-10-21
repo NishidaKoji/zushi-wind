@@ -91,8 +91,7 @@ def candidate_video_urls():
         pattern = r'(?:youtube\.com/(?:embed/|watch\?v=)|youtu\.be/)([A-Za-z0-9_-]{11})'
         for match in re.finditer(pattern, page_html):
             nearby = page_html[max(0, match.start() - 600):match.end() + 250]
-            if ("風向風速計" in nearby or "Anemometer" in nearby or
-                    match.group(1) == "41UP1WsRBKw"):
+            if "風向風速計" in nearby or "Anemometer" in nearby:
                 url = "https://www.youtube.com/watch?v=" + match.group(1)
                 if url not in urls:
                     urls.append(url)
