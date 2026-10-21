@@ -1,4 +1,4 @@
-name: Enoden isolated signing check
+name: Enoden timetable HTML structural diagnostic
 on:
   push:
     branches:
@@ -6,64 +6,26 @@ on:
   pull_request:
     branches:
       - main
-  workflow_dispatch:
 jobs:
   inspect:
-    runs-on: macos-latest
+    runs-on: ubuntu-latest
     permissions:
       contents: read
     steps:
-      - name: Check official HTML and signer
+      - name: Inspect last departures and class markup
         shell: bash
         run: |
-          set -euo pipefail
-          echo "OS: $(sw_vers -productVersion)"
-          xcrun --find shortcuts || true
-          shortcuts sign --help || true
           python3 - <<'PY'
-          import urllib.request, re
+          import urllib.request,re
           u='https://www.enoden.co.jp/train/station/kamakura/time-table/'
           req=urllib.request.Request(u,headers={'User-Agent':'Mozilla/5.0','Cache-Control':'no-cache'})
-          b=urllib.request.urlopen(req,timeout=20).read()
-          s=b.decode('utf-8','replace')
-          print('HTML_LENGTH',len(s))
-          for marker in ('藤沢行き','江ノ島行','時刻表','<tbody','class="time','<table'):
-              print('MARKER',marker,s.find(marker))
-          p=s.find('藤沢行き')
-          if p>=0: print('HTML_SNIP',s[max(0,p-900):p+6200])
+          res=urllib.request.urlopen(req,timeout=20)
+          s=res.read().decode('utf-8','replace')
+          print('len',len(s),'content-type',res.headers.get('Content-Type'))
+          for h in (21,22,23):
+              x=f'<div class="time-schedule-td time-schedule-td-hour">{h}</div>'
+              i=s.find(x)
+              print('HOUR',h,'OFFSET',i,'HTML',s[max(0,i-40):i+1500])
+          for k in ('藤沢行き','江ノ島行','time-schedule-minute','time-schedule-row'):
+              print(k,'count',s.count(k))
           PY
-          python3 - <<'PY'
-          import plistlib,uuid
-          p={'WFWorkflowActions':[{'WFWorkflowActionIdentifier':'is.workflow.actions.gettext','WFWorkflowActionParameters':{'UUID':str(uuid.uuid4()).upper(),'WFTextActionText':'Enoden signing check'}}], 'WFWorkflowClientVersion':'3036.0.4','WFWorkflowHasOutputFallback':False,'WFWorkflowHasShortcutInputVariables':False,'WFWorkflowIcon':{'WFWorkflowIconStartColor':4282601983,'WFWorkflowIconGlyphNumber':59845},'WFWorkflowImportQuestions':[],'WFWorkflowInputContentItemClasses':[],'WFWorkflowMinimumClientVersion':900,'WFWorkflowMinimumClientVersionString':'900','WFWorkflowName':'江ノ電署名確認','WFWorkflowOutputContentItemClasses':[],'WFWorkflowTypes':[]}
-          open('test.wflow','wb').write(plistlib.dumps(p))
-          PY
-          python3 - <<'PY'
-          import urllib.request,json
-          p=open('test.wflow','rb').read().decode('utf-8')
-          body=json.dumps({'shortcutName':'江ノ電署名確認','shortcut':p},ensure_ascii=False).encode('utf-8')
-          req=urllib.request.Request('https://hubsign.routinehub.services/sign',
-              data=body,headers={'Content-Type':'application/json',
-              'Origin':'https://routinehub.co','Referer':'https://routinehub.co/',
-              'User-Agent':'Mozilla/5.0'},method='POST')
-          try:
-              resp=urllib.request.urlopen(req,timeout=40)
-              data=resp.read()
-              print('HubSign HTTP',resp.status,'type',resp.headers.get('Content-Type'),'magic',repr(data[:6]))
-          except urllib.error.HTTPError as ex:
-              data=ex.read()
-              print('HubSign HTTP error',ex.code,'body preview',repr(data[:350]))
-              raise
-          open('signed-test.shortcut','wb').write(data)
-          PY
-          file signed-test.shortcut
-          ls -l signed-test.shortcut
-          python3 - <<'PY'
-          b=open('signed-test.shortcut','rb').read()
-          print('SIGN_MAGIC',b[:4], 'BYTES',len(b))
-          assert b[:4] == b'AEA1' and len(b) > 1000, 'not a signed Apple shortcut'
-          PY
-      - name: Upload signed diagnostic
-        uses: actions/upload-artifact@v4
-        with:
-          name: enoden-sign-test
-          path: signed-test.shortcut
