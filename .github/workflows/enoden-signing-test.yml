@@ -46,7 +46,7 @@ jobs:
           assert decoded['WFWorkflowActionParameters']['WFInput']['Value']['OutputName']=='renamed'
           assert any(x['WFWorkflowActionIdentifier']=='is.workflow.actions.text.split' for x in a)
           assert sum(x.get('WFWorkflowActionParameters',{}).get('WFMathOperation')=='+' for x in a)>=4
-          assert '江ノ電 鎌倉駅' in str(p.get('WFWorkflowName',''))
+          assert 'Watch' in p.get('WFWorkflowTypes',[])
           print('STATIC_PASS')
           PY
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
