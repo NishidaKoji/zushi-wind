@@ -1,0 +1,25 @@
+name: Shichirigahama HTML inspection
+on:
+  push:
+    branches: [enoden-shortcut-build-20261021]
+    paths: ['.github/workflows/shichirigahama-inspect.yml']
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Inspect exact timetable rows
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import urllib.request,re
+          url='https://www.enoden.co.jp/train/station/shichirigahama/time-table/'
+          resp=urllib.request.urlopen(urllib.request.Request(url,headers={'User-Agent':'Mozilla/5.0','Cache-Control':'no-cache'}),timeout=20)
+          s=resp.read().decode('utf-8','replace')
+          print('URL',resp.url,'STATUS',resp.status,'LEN',len(s))
+          for marker in ('藤沢行き','鎌倉行き','time-schedule-row','time-schedule-td','time-schedule-minute','<p class="num cap">江','<p class="num cap">極'):
+              print('MARKER',marker,s.count(marker),'FIRST',s.find(marker))
+          for hh in (5,6,21,22,23):
+              pat=r'<div class="time-schedule-td time-schedule-td-hour">'+str(hh)+r'</div>'
+              i=s.find(pat);print('HOUR',hh,'AT',i)
+              if i>=0: print('ROW_SNIP',s[max(0,i-65):i+2500])
+          PY
