@@ -7,10 +7,14 @@
 #include 'actions/calendar'
 
 // Read each invocation from official timetable; no cached services
-const html = getText(downloadURL("https://www.enoden.co.jp/train/station/kamakura/time-table/"))
+const downloaded = downloadURL("https://www.enoden.co.jp/train/station/kamakura/time-table/")
+const html = getText(downloaded)
 @parts = splitText(html, '<div class="time-schedule-row">')
-@nowH = number(formatDate("{CurrentDate}", "Custom", "H"))
-@nowM = number(formatDate("{CurrentDate}", "Custom", "m"))
+@date = currentDate()
+@hTime = formatDate(@date, "Custom", "H")
+@mTime = formatDate(@date, "Custom", "m")
+@nowH = number(@hTime)
+@nowM = number(@mTime)
 @now = @nowH * 60
 @now += @nowM
 @best1 = 1500
@@ -21,13 +25,15 @@ const html = getText(downloadURL("https://www.enoden.co.jp/train/station/kamakur
 for row in @parts {
     @hours = matchText('time-schedule-td-hour">([0-9]{1,2})', @row)
     if @hours {
-        @hstr = getMatchGroup(getFirstItem(@hours), 1)
+        @hourMatch = getFirstItem(@hours)
+        @hstr = getMatchGroup(@hourMatch, 1)
         @h = number(@hstr)
         @cells = splitText(@row, '<div class="time-schedule-minute">')
         for cell in @cells {
             @minutes = matchText('<p class="num">([0-9]{1,2})</p>', @cell)
             if @minutes {
-                @mstr = getMatchGroup(getFirstItem(@minutes), 1)
+                @minuteMatch = getFirstItem(@minutes)
+                @mstr = getMatchGroup(@minuteMatch, 1)
                 @m = number(@mstr)
                 @dest = "藤沢行"
                 if @cell contains 'num cap">江' {
