@@ -10,7 +10,7 @@ jobs:
   inspect:
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      contents: write
     steps:
       - uses: actions/checkout@v4
       - name: Compile Apple native shortcut via Cherri
@@ -21,6 +21,29 @@ jobs:
           cd /tmp/cherri
           go run . "$GITHUB_WORKSPACE/enoden/next-two.cherri" --debug --no-sign
           ls -lah "$GITHUB_WORKSPACE/enoden/"
+      - name: Verify signed file and publish only in isolated branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import glob, plistlib, os
+          ps=glob.glob('enoden/*.shortcut')
+          assert len(ps)==1, f'expected exactly 1 signed file: {ps}'
+          b=open(ps[0],'rb').read()
+          print('SIGNED_MAGIC',repr(b[:4]),'BYTES',len(b))
+          assert b[:4]==b'AEA1' and len(b)>1000, 'shortcuts signing failed'
+          pl=plistlib.load(open(glob.glob('enoden/*.plist')[0],'rb'))
+          a=pl.get('WFWorkflowActions',[])
+          print('ACTIONS',len(a),'TYPES',pl.get('WFWorkflowTypes'))
+          assert len(a)>15, 'too few actions'
+          assert 'Watch' in pl.get('WFWorkflowTypes',[]), 'Watch is not enabled'
+          assert not any('gemini' in repr(x).lower() for x in a)
+          PY
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git config user.name "github-actions[bot]"
+          git add -f enoden/*.shortcut
+          git commit -m "Add signed native Enoden watch shortcut [skip ci]"
+          git push origin HEAD:enoden-shortcut-build-20261021
       - name: Verify timetable HTML structure, destination markings and top-two calculation
         shell: bash
         run: |
