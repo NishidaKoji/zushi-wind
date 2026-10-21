@@ -46,14 +46,14 @@ jobs:
           assert any(a['WFWorkflowActionIdentifier']=='is.workflow.actions.gettext' and a['WFWorkflowActionParameters'].get('CustomOutputName')=='html' for a in actions), 'explicit text action not found'
           additions=[]
           for a in actions:
-              par=a['WFWorkflowActionParameters']
+              par=a.get('WFWorkflowActionParameters',{})
               if a['WFWorkflowActionIdentifier']=='is.workflow.actions.math':
                   print('MATH',par.get('WFMathOperation'),par.get('WFInput'),par.get('WFMathOperand'))
                   if par.get('WFMathOperation')=='+': additions.append(par)
           assert len(additions)>=3,'missing addition calculation steps'
           # This catches the old bug that overwrote "now" and "departure".
           for idx,a in enumerate(actions):
-              par=a['WFWorkflowActionParameters']
+              par=a.get('WFWorkflowActionParameters',{})
               if a['WFWorkflowActionIdentifier']=='is.workflow.actions.setvariable' and par.get('WFVariableName') in ('now','departure'):
                   print('SETTING',idx,par.get('WFVariableName'),par['WFInput'])
           assert len(actions)>80,'abnormally short workflow'
