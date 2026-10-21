@@ -3,8 +3,12 @@ on:
   push:
     branches:
       - enoden-shortcut-build-20261021
+  pull_request:
+    branches:
+      - main
 jobs:
   inspect:
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     permissions:
       contents: write
