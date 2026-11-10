@@ -13,6 +13,7 @@ import re
 import shutil
 import subprocess
 import sys
+import time
 import urllib.request
 import zipfile
 from datetime import datetime, timezone
@@ -102,109 +103,108 @@ def candidate_video_urls():
     return urls
 
 
-def resolve_youtube_stream(deno):
+def candidate_stream_urls(deno):
+    """Try alternative YouTube formats and providers; validate by decoding a frame."""
     cookie_file = os.environ.get("YOUTUBE_COOKIES_FILE")
     common = [
-        "yt-dlp",
-        "--js-runtimes",
-        f"deno:{deno}",
-        "--remote-components",
-        "ejs:github",
-        "--no-playlist",
-        "--socket-timeout",
-        "30",
+        "yt-dlp", "--js-runtimes", f"deno:{deno}",
+        "--remote-components", "ejs:github",
+        "--no-playlist", "--socket-timeout", "20",
         "-g",
-        "-f",
-        "best*[height<=720]/best*",
     ]
     if cookie_file and Path(cookie_file).is_file():
         common.extend(["--cookies", cookie_file])
-    attempts = [
-        "youtube:player_client=default,mweb",
-        "youtube:player_client=default,android;formats=missing_pot",
-        "youtube:player_client=tv",
-        "youtube:player_client=tv_downgraded",
+    # Live HLS (often itag 93) can give an unplayable manifest even when
+    # yt-dlp succeeds. Prefer trying a different client/format next.
+    strategies = [
+        ("youtube:player_client=default,mweb", "best*[height<=720]/best*"),
+        ("youtube:player_client=tv", "bestvideo[protocol^=https][height<=720]/bestvideo[height<=720]/best*"),
+        ("youtube:player_client=default,android;formats=missing_pot", "bestvideo[height<=720]/best*[height<=720]/best*"),
+        ("youtube:player_client=tv_downgraded", "best*[height<=480]/best*"),
     ]
-    errors = []
+    deadline = time.monotonic() + 180
+    seen = set()
     candidates = candidate_video_urls()
     for candidate in candidates:
-        for extractor_args in attempts:
+        for extractor_args, fmt in strategies:
+            if time.monotonic() >= deadline:
+                return
             try:
-                output = run_text(
-                    common + ["--extractor-args", extractor_args, candidate], 45,
-                )
-                urls = [line.strip() for line in output.splitlines() if line.startswith("http")]
-                if urls:
-                    print(f"映像取得元: {candidate}", file=sys.stderr)
-                    return urls[0]
-                errors.append(f"{candidate} {extractor_args}: URLなし")
+                out = run_text(common + [
+                    "--extractor-args", extractor_args, "-f", fmt, candidate
+                ], min(40, max(8, int(deadline - time.monotonic()))))
+                urls = [line.strip() for line in out.splitlines()
+                        if line.strip().startswith(("https://", "http://"))]
+                for url in urls:
+                    if url not in seen:
+                        seen.add(url)
+                        yield candidate, url
             except Exception as exc:
-                errors.append(f"{candidate} {extractor_args}: {exc}")
-
-    # Anonymous mirror fallback. No account cookies or credentials are used.
-    # Current public instances listed by the Piped project.  Instances come
-    # and go, so try the whole list instead of depending on three hosts.
+                print(f"YouTube別形式の取得失敗: {str(exc)[-180:]}", file=sys.stderr)
+    # Only for this video's ID found on Riviera's official page.
     for base in (
         "https://pipedapi.kavin.rocks",
         "https://pipedapi.leptons.xyz",
         "https://pipedapi.nosebs.ru",
-        "https://pipedapi-libre.kavin.rocks",
-        "https://piped-api.privacy.com.de",
         "https://pipedapi.adminforge.de",
         "https://api.piped.yt",
         "https://pipedapi.drgns.space",
         "https://pipedapi.owo.si",
         "https://pipedapi.ducks.party",
-        "https://piped-api.codespace.cz",
-        "https://pipedapi.reallyaweso.me",
-        "https://api.piped.private.coffee",
-        "https://pipedapi.darkness.services",
-        "https://pipedapi.orangenet.cc",
     ):
+        if time.monotonic() >= deadline:
+            return
         try:
             request = urllib.request.Request(
                 f"{base}/streams/{candidates[0].split('v=')[-1]}",
                 headers={"User-Agent": "zushi-wind/2"},
             )
-            with urllib.request.urlopen(request, timeout=18) as response:
+            with urllib.request.urlopen(request, timeout=12) as response:
                 info = json.load(response)
+            urls = []
             if info.get("hls"):
-                return info["hls"]
-            streams = [item for item in info.get("videoStreams", []) if item.get("url")]
-            if streams:
-                return max(streams, key=lambda item: item.get("height") or 0)["url"]
-            errors.append(f"{base}: URLなし")
+                urls.append(info["hls"])
+            urls.extend(item["url"] for item in sorted(
+                (item for item in info.get("videoStreams", []) if item.get("url")),
+                key=lambda item: item.get("height") or 0, reverse=True)[:2])
+            for url in urls:
+                if url not in seen:
+                    seen.add(url)
+                    yield base, url
         except Exception as exc:
-            errors.append(f"{base}: {exc}")
-    raise RuntimeError("ライブ映像URLを取得できません:\n" + "\n".join(errors))
+            print(f"代替配信先の取得失敗: {base}: {str(exc)[-120:]}", file=sys.stderr)
 
 
 def grab_frame_with_deno():
     deno = TOOLS / "deno"
-    stream_url = resolve_youtube_stream(deno)
     temporary = zushi_wind.FRAME.with_suffix(".new.jpg")
-    zushi_wind.run(
-        [
-            "ffmpeg",
-            "-hide_banner",
-            "-loglevel",
-            "error",
-            "-y",
-            "-i",
-            stream_url,
-            "-vf",
-            "scale=640:360:flags=lanczos",
-            "-frames:v",
-            "1",
-            "-q:v",
-            "2",
-            str(temporary),
-        ],
-        75,
+    failures = []
+    for source, stream_url in candidate_stream_urls(deno):
+        try:
+            print(f"風速映像の取得を試行: {source}", file=sys.stderr)
+            zushi_wind.run(
+                [
+                    "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+                    "-rw_timeout", "12000000",
+                    "-i", stream_url,
+                    "-vf", "scale=640:360:flags=lanczos",
+                    "-frames:v", "1", "-q:v", "2",
+                    str(temporary),
+                ], 25,
+            )
+            if not temporary.exists() or temporary.stat().st_size < 5000:
+                raise RuntimeError("取得画像が不完全です")
+            temporary.replace(zushi_wind.FRAME)
+            print(f"風速映像の取得成功: {source}", file=sys.stderr)
+            return
+        except Exception as exc:
+            failures.append(str(exc)[-180:])
+            temporary.unlink(missing_ok=True)
+            print(f"この映像形式は取得不可。別の形式を試行: {str(exc)[-150:]}", file=sys.stderr)
+    raise RuntimeError(
+        "風速ライブ映像のどの候補からも画像を取得できません: " +
+        " / ".join(failures[-4:])
     )
-    if not temporary.exists() or temporary.stat().st_size < 5000:
-        raise RuntimeError("取得画像が不完全です")
-    temporary.replace(zushi_wind.FRAME)
 
 
 zushi_wind.grab_frame = grab_frame_with_deno
