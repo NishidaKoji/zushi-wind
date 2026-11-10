@@ -127,8 +127,7 @@ jobs:
           git diff --cached --quiet || git commit -m "Update wind reading"
           git push
 
-      - name: Mark acquisition failure
+      - name: Log acquisition failure (notification via 30-minute issue only)
         if: steps.wind.outcome != 'success'
         run: |
-          echo "風速取得失敗: watch.txt を取得停止表示に更新済み" >&2
-          exit 1
+          echo "::warning::風速取得に失敗しました。watch.txt は取得停止表示に更新し、30分以上の障害はIssueで通知します。"
