@@ -17,7 +17,10 @@ jobs:
         shell: bash
         run: |
           set -euxo pipefail
-          git clone -q --depth 1 https://github.com/electrikmilk/cherri.git /tmp/cherri
+          git init -q /tmp/cherri
+          git -C /tmp/cherri remote add origin https://github.com/electrikmilk/cherri.git
+          git -C /tmp/cherri fetch -q --depth 1 origin 7168fd0fb1c1b1ea9150cc078f82aada3d57174d
+          git -C /tmp/cherri checkout -q --detach FETCH_HEAD
           cd /tmp/cherri
           go run . "$GITHUB_WORKSPACE/enoden/kamakura-next-fast.cherri" --debug --no-sign
       - name: Validate native action parameters and shortcut
