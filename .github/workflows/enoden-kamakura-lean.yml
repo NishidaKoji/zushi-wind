@@ -67,7 +67,7 @@ jobs:
           assert '江ノ電 鎌倉駅' in body
           assert '次発2本 v6' not in body
           splits=[x.get('WFWorkflowActionParameters',{}) for x in a if x['WFWorkflowActionIdentifier']=='is.workflow.actions.text.split']
-          assert len(splits)>=3
+          assert len(splits)==2, ('Unexpected extra text splits',len(splits))
           dynamic=[x for x in splits if x.get('WFTextCustomSeparator',{}).__class__!=str]
           print('DYNAMIC_SEPARATOR_ACTIONS',len(dynamic))
           for pp in splits: print('SPLIT_PARAM',str(pp)[:400])
