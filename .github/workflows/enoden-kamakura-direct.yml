@@ -109,7 +109,7 @@ jobs:
               hh=now//60
               marker=f'time-schedule-td-hour">{hh}</div>'
               chunks=page.split(marker)
-              current_html=marker+chunks[-1] if len(chunks)>1 else page
+              current_html=marker+chunks[-1] if len(chunks)>1 and hh>=hours[0][0] else page
               current_rows=current_html.split('<div class="time-schedule-row">')
               def check_row(row,tomorrow=False):
                   hmatch=re.search(r'time-schedule-td-hour">([0-9]{1,2})',row)
