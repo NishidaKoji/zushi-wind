@@ -201,10 +201,71 @@ def grab_frame_with_deno():
             failures.append(str(exc)[-180:])
             temporary.unlink(missing_ok=True)
             print(f"この映像形式は取得不可。別の形式を試行: {str(exc)[-150:]}", file=sys.stderr)
-    raise RuntimeError(
-        "風速ライブ映像のどの候補からも画像を取得できません: " +
-        " / ".join(failures[-4:])
-    )
+    print("動画取得失敗: " + " / ".join(failures[-3:]), file=sys.stderr)
+    grab_live_thumbnail_frame()
+
+
+def grab_live_thumbnail_frame():
+    """Use only changing live previews; never publish a static cover as current wind."""
+    import hashlib
+    for candidate in candidate_video_urls():
+        video_id = candidate.partition("v=")[2]
+        if not re.fullmatch(r"[A-Za-z0-9_-]{11}", video_id):
+            continue
+        for rendition in ("maxresdefault_live.jpg", "hqdefault_live.jpg"):
+            url = f"https://i.ytimg.com/vi/{video_id}/{rendition}"
+            try:
+                def fetch_snapshot():
+                    request = urllib.request.Request(
+                        f"{url}?fresh={time.time_ns()}",
+                        headers={"User-Agent": "Mozilla/5.0",
+                                 "Cache-Control": "no-cache", "Pragma": "no-cache"},
+                    )
+                    with urllib.request.urlopen(request, timeout=12) as response:
+                        data = response.read(2_000_001)
+                        if not response.headers.get("Content-Type", "").lower().startswith("image/"):
+                            raise RuntimeError("not an image")
+                    if not data.startswith(bytes.fromhex("ffd8ff")) or not 12_000 <= len(data) <= 2_000_000:
+                        raise RuntimeError("invalid or placeholder thumbnail")
+                    return data
+
+                first = fetch_snapshot()
+                time.sleep(22)
+                latest = fetch_snapshot()
+                if hashlib.sha256(first).digest() == hashlib.sha256(latest).digest():
+                    raise RuntimeError("static preview unchanged; freshness not verified")
+
+                source = STATE / "wind-preview-source.jpg"
+                temporary = zushi_wind.FRAME.with_suffix(".new.jpg")
+                source.write_bytes(latest)
+                dimensions = run_text([
+                    "ffprobe", "-v", "error", "-select_streams", "v:0",
+                    "-show_entries", "stream=width,height", "-of",
+                    "csv=s=x:p=0", str(source)
+                ], 10)
+                width, height = map(int, dimensions.split("x"))
+                ratio = width / height
+                if width < 320 or height < 180:
+                    raise RuntimeError("preview too small for OCR")
+                if abs(ratio - 16 / 9) < 0.04:
+                    filters = "scale=640:360:flags=lanczos"
+                elif abs(ratio - 4 / 3) < 0.04:
+                    filters = "crop=iw:iw*9/16,scale=640:360:flags=lanczos"
+                else:
+                    raise RuntimeError(f"unexpected preview aspect ratio: {width}x{height}")
+                zushi_wind.run([
+                    "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+                    "-i", str(source), "-vf", filters,
+                    "-frames:v", "1", "-q:v", "2", str(temporary)
+                ], 15)
+                if not temporary.exists() or temporary.stat().st_size < 5_000:
+                    raise RuntimeError("incomplete preview frame")
+                temporary.replace(zushi_wind.FRAME)
+                print(f"更新を確認したライブ画像を取得: {rendition}", file=sys.stderr)
+                return
+            except Exception as exc:
+                print(f"ライブ画像を却下 ({rendition}): {exc}", file=sys.stderr)
+    raise RuntimeError("風速映像の取得に失敗。動画とライブ画像の両方が利用できません")
 
 
 zushi_wind.grab_frame = grab_frame_with_deno
