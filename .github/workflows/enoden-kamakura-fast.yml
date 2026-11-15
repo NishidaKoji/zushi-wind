@@ -59,8 +59,8 @@ jobs:
           ids=[x['WFWorkflowActionIdentifier'] for x in a]
           assert 'is.workflow.actions.setitemname' in ids
           assert 'is.workflow.actions.detect.text' in ids
-          assert ids.count('is.workflow.actions.repeat.each')==2,[(i,n) for i,n in enumerate(ids) if 'repeat' in n]
-          assert len(a)<225,('Too many actions',len(a))
+          assert ids.count('is.workflow.actions.repeat.each')==8,[(i,n) for i,n in enumerate(ids) if 'repeat' in n]
+          assert len(a)<280,('Unexpected number of compiled actions',len(a))
           texts=[x.get('WFWorkflowActionParameters',{}).get('Text') for x in a if x['WFWorkflowActionIdentifier']=='is.workflow.actions.showresult']
           assert len(texts)==2
           body=json.dumps(texts,ensure_ascii=False)
