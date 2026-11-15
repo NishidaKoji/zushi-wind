@@ -119,6 +119,8 @@ def candidate_stream_urls(deno):
     # Live HLS (often itag 93) can give an unplayable manifest even when
     # yt-dlp succeeds. Prefer trying a different client/format next.
     strategies = [
+        ("youtube:player_client=web_embedded", "best*[height<=720]/best*"),
+        ("youtube:player_client=web_safari", "best*[height<=720]/best*"),
         ("youtube:player_client=default,mweb", "best*[height<=720]/best*"),
         ("youtube:player_client=tv", "bestvideo[protocol^=https][height<=720]/bestvideo[height<=720]/best*"),
         ("youtube:player_client=default,android;formats=missing_pot", "bestvideo[height<=720]/best*[height<=720]/best*"),
