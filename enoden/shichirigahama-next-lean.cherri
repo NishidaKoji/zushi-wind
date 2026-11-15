@@ -1,0 +1,157 @@
+#define name 江ノ電 七里ヶ浜駅 次発
+#define color orange
+#define glyph tram
+#define from watch, search
+#include 'actions/web'
+#include 'actions/text'
+#include 'actions/calendar'
+
+// Fetch the official timetable fresh and inspect only enough hours for two trains per direction.
+const downloaded = downloadURL("https://www.enoden.co.jp/train/station/shichirigahama/time-table/")
+const textFile = setName(downloaded, "enoden-shichirigahama.txt", true)
+@page = getText(textFile)
+@date = currentDate()
+@hourString = formatDate(@date, "Custom", "H")
+@minuteString = formatDate(@date, "Custom", "m")
+@nowH = number(@hourString)
+@nowM = number(@minuteString)
+@now = @nowH * 60
+@now = @now + @nowM
+
+// Jump to the current hour. Before the first operating hour, start at the beginning.
+@hourMarker = "time-schedule-td-hour\">{@nowH}</div>"
+@segments = splitText(@page, @hourMarker)
+@firstHours = matchText('time-schedule-td-hour">([0-9]{1,2})', @page)
+@firstHourMatch = getFirstItem(@firstHours)
+@firstHourString = getMatchGroup(@firstHourMatch, 1)
+@firstHour = number(@firstHourString)
+@hoursAfterFirst = @nowH - @firstHour
+@currentSection = @page
+if @hoursAfterFirst >= 0 {
+    @segmentsCount = count(@segments)
+    if @segmentsCount > 1 {
+        @tail = getLastItem(@segments)
+        @currentSection = "{@hourMarker}{@tail}"
+    }
+}
+
+// Reuse the same fetched timetable for next-day rollover if needed.
+// The marker is placed before the next day's first hour row.
+@combined = "{@currentSection}<div class=\"time-schedule-row\">ENODEN_NEXT_DAY{@page}"
+@rows = splitText(@combined, '<div class="time-schedule-row">')
+@tomorrow = 0
+@countF = 0
+@countK = 0
+@totalFound = 0
+@lineF1 = ""
+@lineF2 = ""
+@lineK1 = ""
+@lineK2 = ""
+
+for row in @rows {
+    if @totalFound < 4 {
+        @dayMarker = matchText('ENODEN_NEXT_DAY', @row)
+        if @dayMarker {
+            @tomorrow = 1
+        }
+        @hours = matchText('time-schedule-td-hour">([0-9]{1,2})', @row)
+        if @hours {
+            @hourMatch = getFirstItem(@hours)
+            @hstr = getMatchGroup(@hourMatch, 1)
+            @h = number(@hstr)
+            @hpad = @hstr
+            if @h < 10 {
+                @hpad = "0{@hstr}"
+            }
+            // Structural columns: 1 = heading, 2 = Fujisawa, 3 = Kamakura.
+            @columns = splitText(@row, '<div class="time-schedule-td">')
+            @side = 0
+            for column in @columns {
+                @side = @side + 1
+                @needColumn = 0
+                if @side == 2 {
+                    if @countF < 2 {
+                        @needColumn = 1
+                    }
+                }
+                if @side == 3 {
+                    if @countK < 2 {
+                        @needColumn = 1
+                    }
+                }
+                if @needColumn > 0 {
+                    // One match extracts each departure's minute and its destination marker.
+                    @services = matchText('<div class="time-schedule-minute">[^<]*(?:<p class="num cap">[江極稲]</p>[^<]*)?<p class="num">([0-9]{1,2})</p>', @column)
+                    for service in @services {
+                        @needService = 0
+                        if @side == 2 {
+                            if @countF < 2 {
+                                @needService = 1
+                            }
+                        }
+                        if @side == 3 {
+                            if @countK < 2 {
+                                @needService = 1
+                            }
+                        }
+                        if @needService > 0 {
+                            @mstr = getMatchGroup(@service, 1)
+                            @m = number(@mstr)
+                            @departure = @h * 60
+                            @departure = @departure + @m
+                            @delta = @departure - @now
+                            if @tomorrow > 0 {
+                                @delta = @delta + 1440
+                            }
+                            if @delta > 0 {
+                                @mpad = @mstr
+                                if @m < 10 {
+                                    @mpad = "0{@mstr}"
+                                }
+                                @destination = "藤沢行"
+                                if @side == 3 {
+                                    @destination = "鎌倉行"
+                                }
+                                @isEnoshima = matchText('<p class="num cap">江</p>', @service)
+                                if @isEnoshima {
+                                    @destination = "江ノ島行"
+                                }
+                                @isGokurakuji = matchText('<p class="num cap">極</p>', @service)
+                                if @isGokurakuji {
+                                    @destination = "極楽寺行"
+                                }
+                                @isInamuragasaki = matchText('<p class="num cap">稲</p>', @service)
+                                if @isInamuragasaki {
+                                    @destination = "稲村ヶ崎行"
+                                }
+                                @display = "{@hpad}:{@mpad} {@destination} あと約{@delta}分"
+                                if @side == 2 {
+                                    if @countF == 0 {
+                                        @lineF1 = @display
+                                    } else {
+                                        @lineF2 = @display
+                                    }
+                                    @countF = @countF + 1
+                                }
+                                if @side == 3 {
+                                    if @countK == 0 {
+                                        @lineK1 = @display
+                                    } else {
+                                        @lineK2 = @display
+                                    }
+                                    @countK = @countK + 1
+                                }
+                                @totalFound = @totalFound + 1
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+if @totalFound < 4 {
+    show("江ノ電 七里ヶ浜駅\n公式時刻表を読み取れませんでした。")
+} else {
+    show("江ノ電 七里ヶ浜駅\n【鎌倉方面】\n{@lineK1}\n{@lineK2}\n【藤沢方面】\n{@lineF1}\n{@lineF2}")
+}
