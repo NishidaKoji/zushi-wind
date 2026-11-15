@@ -1,0 +1,178 @@
+name: Temporary Shichirigahama lean shortcut validation
+on:
+  push:
+    branches: [enoden-shortcut-build-20261021]
+    paths:
+      - 'enoden/shichirigahama-next-lean.cherri'
+      - '.github/workflows/shichirigahama-lean-build.yml'
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile and sign native shortcut with pinned working compiler
+        shell: bash
+        run: |
+          set -euo pipefail
+          git init -q /tmp/cherri
+          git -C /tmp/cherri remote add origin https://github.com/electrikmilk/cherri.git
+          git -C /tmp/cherri fetch -q --depth 1 origin 7168fd0fb1c1b1ea9150cc078f82aada3d57174d
+          git -C /tmp/cherri checkout -q --detach FETCH_HEAD
+          cd /tmp/cherri
+          go run . "$GITHUB_WORKSPACE/enoden/shichirigahama-next-lean.cherri" --debug --no-sign
+      - name: Validate signature, Apple Watch type, flow and output
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import plistlib,glob,json
+          ps=glob.glob('enoden/江ノ電 七里ヶ浜駅 次発.plist')
+          fs=glob.glob('enoden/江ノ電 七里ヶ浜駅 次発.shortcut')
+          assert len(ps)==1 and len(fs)==1,(ps,fs)
+          b=open(fs[0],'rb').read()
+          print('SIGNED_MAGIC',repr(b[:4]),'SIGNED_SIZE',len(b))
+          assert b[:4]==b'AEA1' and len(b)>5000
+          p=plistlib.load(open(ps[0],'rb'))
+          acts=p['WFWorkflowActions']
+          ids=[x['WFWorkflowActionIdentifier'] for x in acts]
+          print('ACTIONS',len(acts),'TYPES',p.get('WFWorkflowTypes'))
+          assert 'Watch' in p.get('WFWorkflowTypes',[])
+          assert acts[0]['WFWorkflowActionIdentifier']=='is.workflow.actions.downloadurl'
+          assert acts[0]['WFWorkflowActionParameters']['WFURL']=='https://www.enoden.co.jp/train/station/shichirigahama/time-table/'
+          assert len(acts)<280
+          assert ids.count('is.workflow.actions.repeat.each')==6,[(i,n) for i,n in enumerate(ids) if 'repeat' in n]
+          assert 'is.workflow.actions.detect.text' in ids
+          for i,act in enumerate(acts):
+              par=act.get('WFWorkflowActionParameters',{})
+              if act['WFWorkflowActionIdentifier']=='is.workflow.actions.conditional' and par.get('WFControlFlowMode')==0:
+                  op=par.get('WFCondition')
+                  assert op!=99,('Unsupported contains',i)
+                  if op in [0,1,2,3,4,5]:
+                      assert 'WFNumberValue' in par and 'WFConditionalActionString' not in par,('Missing numeric operand',i)
+                  elif op==100:
+                      assert 'WFInput' in par,('Missing boolean operand',i)
+                  else:
+                      raise AssertionError(('Invalid conditional',i,op,par))
+          patterns=[x.get('WFWorkflowActionParameters',{}).get('WFMatchTextPattern') for x in acts if x['WFWorkflowActionIdentifier']=='is.workflow.actions.text.match']
+          combined_pattern='<div class="time-schedule-minute">[^<]*(?:<p class="num cap">[江極稲]</p>[^<]*)?<p class="num">([0-9]{1,2})</p>'
+          assert combined_pattern in patterns,(combined_pattern,patterns)
+          for dest in ['江','極','稲']:
+              assert '<p class="num cap">'+dest+'</p>' in patterns
+          result=[x.get('WFWorkflowActionParameters',{}).get('Text') for x in acts if x['WFWorkflowActionIdentifier']=='is.workflow.actions.showresult']
+          assert len(result)==2
+          body=json.dumps(result,ensure_ascii=False)
+          assert all(s in body for s in ['江ノ電 七里ヶ浜駅','【鎌倉方面】','【藤沢方面】'])
+          assert '\\n\\n【藤沢方面】' not in body and 'v6' not in body
+          splits=[x.get('WFWorkflowActionParameters',{}).get('WFTextCustomSeparator') for x in acts if x['WFWorkflowActionIdentifier']=='is.workflow.actions.text.split']
+          print('SPLITS',splits)
+          assert '<div class="time-schedule-td">' in splits
+          assert '<div class="time-schedule-row">' in splits
+          print('STATIC_SHORTCUT_VALIDATION_PASS')
+          PY
+      - name: Verify official timetable and all 1440 current times
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import re,urllib.request
+          u='https://www.enoden.co.jp/train/station/shichirigahama/time-table/'
+          q=urllib.request.Request(u,headers={'User-Agent':'Mozilla/5.0','Cache-Control':'no-cache'})
+          resp=urllib.request.urlopen(q,timeout=30)
+          html=resp.read().decode('utf-8','replace')
+          assert resp.status==200
+          row_sep='<div class="time-schedule-row">'
+          col_sep='<div class="time-schedule-td">'
+          service_rx=re.compile(r'<div class="time-schedule-minute">[^<]*(?:<p class="num cap">[江極稲]</p>[^<]*)?<p class="num">([0-9]{1,2})</p>')
+          def destination(text,default):
+              if '<p class="num cap">江</p>' in text:return '江ノ島行'
+              if '<p class="num cap">極</p>' in text:return '極楽寺行'
+              if '<p class="num cap">稲</p>' in text:return '稲村ヶ崎行'
+              return default
+          timetable={'F':[],'K':[]}
+          for row in html.split(row_sep):
+              hmatch=re.search(r'time-schedule-td-hour">([0-9]{1,2})',row)
+              if not hmatch:continue
+              h=int(hmatch.group(1))
+              cols=row.split(col_sep)
+              if len(cols)<3:continue
+              for index,side,default in [(2,'F','藤沢行'),(3,'K','鎌倉行')]:
+                  for svc in service_rx.finditer(cols[index-1]):
+                      minute=int(svc.group(1))
+                      assert 0<=minute<60
+                      timetable[side].append((h*60+minute,destination(svc.group(0),default)))
+          print('OFFICIAL_COUNTS',len(timetable['F']),len(timetable['K']),'PAGE_BYTES',len(html))
+          assert len(timetable['F'])>=60 and len(timetable['K'])>=60
+          assert (22*60+39,'江ノ島行') in timetable['F']
+          assert (21*60+34,'極楽寺行') in timetable['K']
+          assert (5*60+39,'藤沢行') in timetable['F']
+          assert (5*60+17,'鎌倉行') in timetable['K']
+          for side in ['F','K']:
+              assert timetable[side]==sorted(timetable[side],key=lambda x:x[0])
+          first_match=re.search(r'time-schedule-td-hour">([0-9]{1,2})',html)
+          first_hour=int(first_match.group(1))
+          def upcoming(now):
+              current_hour=now//60
+              marker=f'time-schedule-td-hour">{current_hour}</div>'
+              segments=html.split(marker)
+              current_section=html
+              if current_hour>=first_hour and len(segments)>1:
+                  current_section=marker+segments[-1]
+              combined=current_section+row_sep+'ENODEN_NEXT_DAY'+html
+              by_side={'F':[],'K':[]}
+              tomorrow=False
+              rows_checked=0
+              services_checked=0
+              for row in combined.split(row_sep):
+                  if len(by_side['F'])+len(by_side['K'])>=4: break
+                  if 'ENODEN_NEXT_DAY' in row:tomorrow=True
+                  hour_match=re.search(r'time-schedule-td-hour">([0-9]{1,2})',row)
+                  if not hour_match:continue
+                  rows_checked+=1
+                  h=int(hour_match.group(1))
+                  hstr=f'{h:02}'
+                  cols=row.split(col_sep)
+                  for index,col in enumerate(cols,1):
+                      side='F' if index==2 else ('K' if index==3 else '')
+                      if not side or len(by_side[side])>=2: continue
+                      for svc in service_rx.finditer(col):
+                          if len(by_side[side])>=2:break
+                          services_checked+=1
+                          m=int(svc.group(1))
+                          depart=h*60+m
+                          delta=depart-now+(1440 if tomorrow else 0)
+                          if delta<=0:continue
+                          d=destination(svc.group(0),'藤沢行' if side=='F' else '鎌倉行')
+                          by_side[side].append((delta,depart,d,f'{hstr}:{m:02} {d} あと約{delta}分'))
+              return by_side,rows_checked,services_checked
+          peak_rows=0
+          peak_services=0
+          for now in range(1440):
+              actual,rows,services=upcoming(now)
+              peak_rows=max(peak_rows,rows)
+              peak_services=max(peak_services,services)
+              for side in ['F','K']:
+                  expected=sorted(((((t-now)%1440 or 1440),t,d) for t,d in timetable[side]))[:2]
+                  computed=[(delta,departure,d) for delta,departure,d,display in actual[side]]
+                  if expected!=computed:
+                      raise AssertionError(f'WRONG {now//60:02}:{now%60:02} {side} expected={expected} computed={computed}')
+          print('ALL_1440_MINUTES_BOTH_DIRECTIONS_PASS')
+          print('PEAK_ROWS_INSPECTED',peak_rows,'PEAK_DEPARTURES_INSPECTED',peak_services)
+          assert peak_rows<=6 and peak_services<=18
+          for h,m in [(0,5),(5,0),(5,20),(12,48),(18,37),(21,35),(22,40),(23,45)]:
+              ans,rows,svcs=upcoming(h*60+m)
+              print('SAMPLE',f'{h:02}:{m:02}','K',[x[-1] for x in ans['K']],'F',[x[-1] for x in ans['F']],'rows',rows,'services',svcs)
+          PY
+      - name: Publish only updated signed Shichirigahama shortcut to isolated branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git config user.name "github-actions[bot]"
+          git fetch origin enoden-shortcut-build-20261021
+          git checkout -B enoden-shortcut-build-20261021 origin/enoden-shortcut-build-20261021
+          git add -f "enoden/江ノ電 七里ヶ浜駅 次発.shortcut"
+          git commit -m "Publish validated faster Shichirigahama native shortcut [skip ci]"
+          git push origin HEAD:enoden-shortcut-build-20261021
+          echo 'PUBLISHED_SIGNED_SHICHIRIGAHAMA_LEAN=true'
