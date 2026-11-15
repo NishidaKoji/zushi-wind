@@ -1,0 +1,104 @@
+#define name 江ノ電 鎌倉駅 次発2本
+#define color orange
+#define glyph tram
+#define from watch, search
+#include 'actions/web'
+#include 'actions/text'
+#include 'actions/calendar'
+
+// Always use the live official timetable, without a fixed schedule or extra app.
+const downloaded = downloadURL("https://www.enoden.co.jp/train/station/kamakura/time-table/")
+const asTextFile = setName(downloaded, "enoden-kamakura.txt", true)
+const page = getText(asTextFile)
+@nowDate = currentDate()
+@nowHourText = formatDate(@nowDate, "Custom", "H")
+@nowMinuteText = formatDate(@nowDate, "Custom", "m")
+@nowHour = number(@nowHourText)
+@nowMinute = number(@nowMinuteText)
+@now = @nowHour * 60
+@now = @now + @nowMinute
+
+// One split lands in today's current hour regardless of the time of day.
+@hourMarker = "time-schedule-td-hour\">{@nowHour}</div>"
+@hourParts = splitText(page, @hourMarker)
+@firstHours = matchText('time-schedule-td-hour">([0-9]{1,2})', page)
+@firstHourMatch = getFirstItem(@firstHours)
+@firstHourText = getMatchGroup(@firstHourMatch, 1)
+@firstHour = number(@firstHourText)
+@afterFirst = @nowHour - @firstHour
+@currentSection = page
+if @afterFirst >= 0 {
+    @pieceCount = count(@hourParts)
+    if @pieceCount > 1 {
+        @afterMarker = getLastItem(@hourParts)
+        @currentSection = "{@hourMarker}{@afterMarker}"
+    }
+}
+
+// Append live timetable to handle times after the last train.
+// Marker distinguishes tomorrow; no fixed first train or departure count.
+@toCheck = "{@currentSection}<div class=\"time-schedule-row\">ENODEN_TOMORROW{@page}"
+@rows = splitText(@toCheck, '<div class="time-schedule-row">')
+@tomorrow = 0
+@found = 0
+@firstLine = ""
+@secondLine = ""
+for row in @rows {
+    if @found < 2 {
+        @isTomorrowMarker = matchText('ENODEN_TOMORROW', @row)
+        if @isTomorrowMarker {
+            @tomorrow = 1
+        }
+        @hourResults = matchText('time-schedule-td-hour">([0-9]{1,2})', @row)
+        if @hourResults {
+            @hourMatch = getFirstItem(@hourResults)
+            @hourText = getMatchGroup(@hourMatch, 1)
+            @h = number(@hourText)
+            // One regex extracts every minute and its adjacent destination marker.
+            @departures = matchText('<div class="time-schedule-minute">[^<]*(?:<p class="num cap">[江極稲]</p>[^<]*)?<p class="num">([0-9]{1,2})</p>', @row)
+            for service in @departures {
+                if @found < 2 {
+                    @minuteText = getMatchGroup(@service, 1)
+                    @m = number(@minuteText)
+                    @dep = @h * 60
+                    @dep = @dep + @m
+                    @remaining = @dep - @now
+                    if @tomorrow > 0 {
+                        @remaining = @remaining + 1440
+                    }
+                    if @remaining > 0 {
+                        @pad = @minuteText
+                        if @m < 10 {
+                            @pad = "0{@minuteText}"
+                        }
+                        @dest = "藤沢行"
+                        @enoshima = matchText('<p class="num cap">江</p>', @service)
+                        if @enoshima {
+                            @dest = "江ノ島行"
+                        }
+                        @gokurakuji = matchText('<p class="num cap">極</p>', @service)
+                        if @gokurakuji {
+                            @dest = "極楽寺行"
+                        }
+                        @inamuragasaki = matchText('<p class="num cap">稲</p>', @service)
+                        if @inamuragasaki {
+                            @dest = "稲村ヶ崎行"
+                        }
+                        @line = "{@hourText}:{@pad} {@dest} あと約{@remaining}分"
+                        if @found == 0 {
+                            @firstLine = @line
+                        } else {
+                            @secondLine = @line
+                        }
+                        @found = @found + 1
+                    }
+                }
+            }
+        }
+    }
+}
+if @found < 2 {
+    show("江ノ電 鎌倉駅\n時刻表を正しく取得できませんでした。")
+} else {
+    show("江ノ電 鎌倉駅 →\n{@firstLine}\n{@secondLine}")
+}
