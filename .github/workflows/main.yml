@@ -32,14 +32,20 @@ jobs:
         env:
           YOUTUBE_COOKIES_B64: ${{ secrets.YOUTUBE_COOKIES_B64 }}
         run: |
-          if [ -z "$YOUTUBE_COOKIES_B64" ]; then
-            echo "YOUTUBE_COOKIES_B64 secret is not configured" >&2
-            exit 1
-          fi
           COOKIE_FILE="$RUNNER_TEMP/youtube-cookies.txt"
-          printf '%s' "$YOUTUBE_COOKIES_B64" | base64 --decode > "$COOKIE_FILE"
-          chmod 600 "$COOKIE_FILE"
-          YOUTUBE_COOKIES_FILE="$COOKIE_FILE" python generate_cloud.py
+          if [ -n "${YOUTUBE_COOKIES_B64:-}" ]; then
+            if printf '%s' "$YOUTUBE_COOKIES_B64" | base64 --decode > "$COOKIE_FILE"; then
+              chmod 600 "$COOKIE_FILE"
+              YOUTUBE_COOKIES_FILE="$COOKIE_FILE" python generate_cloud.py
+            else
+              echo "::warning::Stored cookies are invalid; trying public sources"
+              rm -f "$COOKIE_FILE"
+              python generate_cloud.py
+            fi
+          else
+            echo "::notice::No stored cookies; trying public sources"
+            python generate_cloud.py
+          fi
 
       - name: Check 30 minute failure state
         if: always()
