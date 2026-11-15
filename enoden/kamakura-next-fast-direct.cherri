@@ -21,10 +21,17 @@ const html = getText(renamed)
 @hourDelimiter = "time-schedule-td-hour\">{@nowH}</div>"
 @segmentsAtHour = splitText(html, @hourDelimiter)
 @segmentCount = count(@segmentsAtHour)
+@firstScheduledHourMatches = matchText('time-schedule-td-hour">([0-9]{1,2})', html)
+@firstScheduledHourMatch = getFirstItem(@firstScheduledHourMatches)
+@firstScheduledHourText = getMatchGroup(@firstScheduledHourMatch, 1)
+@firstScheduledHour = number(@firstScheduledHourText)
+@hoursFromFirst = @nowH - @firstScheduledHour
 @fromCurrentHour = html
-if @segmentCount > 1 {
-    @afterCurrentHour = getLastItem(@segmentsAtHour)
-    @fromCurrentHour = "{@hourDelimiter}{@afterCurrentHour}"
+if @hoursFromFirst >= 0 {
+    if @segmentCount > 1 {
+        @afterCurrentHour = getLastItem(@segmentsAtHour)
+        @fromCurrentHour = "{@hourDelimiter}{@afterCurrentHour}"
+    }
 }
 @rows = splitText(@fromCurrentHour, '<div class="time-schedule-row">')
 @allRows = splitText(html, '<div class="time-schedule-row">')
