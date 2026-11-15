@@ -1,0 +1,12 @@
+{
+  "source": "気象庁アメダス（辻堂）",
+  "kind": "measured_other_station",
+  "station": "辻堂",
+  "station_id": "46141",
+  "observed_at": "2026-11-15T20:40:00+09:00",
+  "ts": 1794742800,
+  "speed": 2.5,
+  "direction": "東",
+  "period": "10分平均",
+  "url": "https://www.jma.go.jp/bosai/amedas/"
+}
