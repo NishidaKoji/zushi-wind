@@ -1,0 +1,140 @@
+#define name 江ノ電 鎌倉駅 次発2本
+#define color orange
+#define glyph tram
+#define from watch, search
+#include 'actions/web'
+#include 'actions/text'
+#include 'actions/calendar'
+
+// Keep a fresh official timetable but only inspect rows until two future services are found.
+const downloaded = downloadURL("https://www.enoden.co.jp/train/station/kamakura/time-table/")
+const renamed = setName(downloaded, "enoden-kamakura.txt", true)
+const html = getText(renamed)
+@rows = splitText(html, '<div class="time-schedule-row">')
+@current = currentDate()
+@hValue = formatDate(@current, "Custom", "H")
+@mValue = formatDate(@current, "Custom", "m")
+@nowH = number(@hValue)
+@nowM = number(@mValue)
+@now = @nowH * 60
+@now = @now + @nowM
+@found = 0
+@line1 = ""
+@line2 = ""
+@readHours = 0
+@readMinutes = 0
+for row in @rows {
+    if @found < 2 {
+        @hours = matchText('time-schedule-td-hour">([0-9]{1,2})', @row)
+        if @hours {
+            @readHours = @readHours + 1
+            @firstHour = getFirstItem(@hours)
+            @hourText = getMatchGroup(@firstHour, 1)
+            @hour = number(@hourText)
+        @differenceHour = @hour - @nowH
+        if @differenceHour >= 0 {
+            @cells = splitText(@row, '<div class="time-schedule-minute">')
+            for cell in @cells {
+                if @found < 2 {
+                    @mins = matchText('<p class="num">([0-9]{1,2})</p>', @cell)
+                    if @mins {
+                        @readMinutes = @readMinutes + 1
+                        @firstMin = getFirstItem(@mins)
+                        @minText = getMatchGroup(@firstMin, 1)
+                        @minute = number(@minText)
+                        @dep = @hour * 60
+                        @dep = @dep + @minute
+                    @remaining = @dep - @now
+                    if @remaining > 0 {
+                        @minPad = @minText
+                        if @minute < 10 {
+                            @minPad = "0{@minText}"
+                        }
+                        @dest = "藤沢行"
+                        @enoshima = matchText('<p class="num cap">江</p>', @cell)
+                        if @enoshima {
+                            @dest = "江ノ島行"
+                        }
+                        @gokurakuji = matchText('<p class="num cap">極</p>', @cell)
+                        if @gokurakuji {
+                            @dest = "極楽寺行"
+                        }
+                        @inamuragasaki = matchText('<p class="num cap">稲</p>', @cell)
+                        if @inamuragasaki {
+                            @dest = "稲村ヶ崎行"
+                        }
+                        @line = "{@hourText}:{@minPad} {@dest} あと約{@remaining}分"
+                        if @found == 0 {
+                            @line1 = @line
+                        } else {
+                            @line2 = @line
+                        }
+                        @found = @found + 1
+                    }
+                    }
+                }
+            }
+        }
+        }
+    }
+}
+
+// Only after the last service: revisit tomorrow's first departures, without caching.
+if @found < 2 {
+    for row in @rows {
+        if @found < 2 {
+            @hours = matchText('time-schedule-td-hour">([0-9]{1,2})', @row)
+            if @hours {
+                @readHours = @readHours + 1
+                @firstHour = getFirstItem(@hours)
+                @hourText = getMatchGroup(@firstHour, 1)
+                @hour = number(@hourText)
+                @cells = splitText(@row, '<div class="time-schedule-minute">')
+                for cell in @cells {
+                    if @found < 2 {
+                        @mins = matchText('<p class="num">([0-9]{1,2})</p>', @cell)
+                        if @mins {
+                            @readMinutes = @readMinutes + 1
+                            @firstMin = getFirstItem(@mins)
+                            @minText = getMatchGroup(@firstMin, 1)
+                            @minute = number(@minText)
+                            @dep = @hour * 60
+                            @dep = @dep + @minute
+                        @nextDay = @dep + 1440
+                        @remaining = @nextDay - @now
+                            @minPad = @minText
+                            if @minute < 10 {
+                                @minPad = "0{@minText}"
+                            }
+                            @dest = "藤沢行"
+                            @enoshima = matchText('<p class="num cap">江</p>', @cell)
+                            if @enoshima {
+                                @dest = "江ノ島行"
+                            }
+                            @gokurakuji = matchText('<p class="num cap">極</p>', @cell)
+                            if @gokurakuji {
+                                @dest = "極楽寺行"
+                            }
+                            @inamuragasaki = matchText('<p class="num cap">稲</p>', @cell)
+                            if @inamuragasaki {
+                                @dest = "稲村ヶ崎行"
+                            }
+                            @line = "{@hourText}:{@minPad} {@dest} あと約{@remaining}分"
+                            if @found == 0 {
+                                @line1 = @line
+                            } else {
+                                @line2 = @line
+                            }
+                            @found = @found + 1
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+if @found < 2 {
+    show("江ノ電 鎌倉駅\n時刻表の解析に失敗しました。\n時間帯：{@readHours}／確認した便：{@readMinutes}")
+} else {
+    show("江ノ電 鎌倉駅 →\n{@line1}\n{@line2}")
+}
