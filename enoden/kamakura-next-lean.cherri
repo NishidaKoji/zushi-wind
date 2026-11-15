@@ -9,7 +9,7 @@
 // Always use the live official timetable, without a fixed schedule or extra app.
 const downloaded = downloadURL("https://www.enoden.co.jp/train/station/kamakura/time-table/")
 const asTextFile = setName(downloaded, "enoden-kamakura.txt", true)
-const page = getText(asTextFile)
+@page = getText(asTextFile)
 @nowDate = currentDate()
 @nowHourText = formatDate(@nowDate, "Custom", "H")
 @nowMinuteText = formatDate(@nowDate, "Custom", "m")
@@ -20,13 +20,13 @@ const page = getText(asTextFile)
 
 // One split lands in today's current hour regardless of the time of day.
 @hourMarker = "time-schedule-td-hour\">{@nowHour}</div>"
-@hourParts = splitText(page, @hourMarker)
-@firstHours = matchText('time-schedule-td-hour">([0-9]{1,2})', page)
+@hourParts = splitText(@page, @hourMarker)
+@firstHours = matchText('time-schedule-td-hour">([0-9]{1,2})', @page)
 @firstHourMatch = getFirstItem(@firstHours)
 @firstHourText = getMatchGroup(@firstHourMatch, 1)
 @firstHour = number(@firstHourText)
 @afterFirst = @nowHour - @firstHour
-@currentSection = page
+@currentSection = @page
 if @afterFirst >= 0 {
     @pieceCount = count(@hourParts)
     if @pieceCount > 1 {
