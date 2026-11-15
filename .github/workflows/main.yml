@@ -21,13 +21,34 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Keep the Watch shortcut usable even when YouTube blocks the marina stream.
+      - name: Read independent reference wind
+        id: backup
+        continue-on-error: true
+        run: python3 wind_backup.py
+
+      # Avoid repeated YouTube bot challenges every five minutes.
+      # Still retry the actual Riviera sensor approximately twice an hour.
+      - name: Choose marina retry cadence
+        id: marina_schedule
+        shell: bash
+        run: |
+          MINUTE=$(date -u +%M)
+          if (( 10#$MINUTE % 30 < 5 )); then
+            echo "try=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "try=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Install OCR and video tools
+        if: steps.marina_schedule.outputs.try == 'true'
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq ffmpeg tesseract-ocr
 
       - name: Read and publish wind
         id: wind
+        if: steps.marina_schedule.outputs.try == 'true'
         continue-on-error: true
         env:
           YOUTUBE_COOKIES_B64: ${{ secrets.YOUTUBE_COOKIES_B64 }}
@@ -71,7 +92,7 @@ jobs:
               gh issue close "$ISSUE" --comment "@NishidaKoji 逗子マリーナ風速取得が復旧しました。"
             fi
             echo "0 0" > "$STATE_FILE"
-          else
+          elif [ "${{ steps.wind.outcome }}" = "failure" ]; then
             if [ "${START:-0}" = "0" ]; then
               START=$NOW
             fi
@@ -96,7 +117,7 @@ jobs:
           git push
 
       - name: Publish failure status
-        if: steps.wind.outcome != 'success'
+        if: steps.wind.outcome != 'success' && steps.backup.outcome != 'success'
         run: |
           python - <<'PY'
           import html, json
@@ -133,7 +154,16 @@ jobs:
           git diff --cached --quiet || git commit -m "Update wind reading"
           git push
 
-      - name: Log acquisition failure (notification via 30-minute issue only)
-        if: steps.wind.outcome != 'success'
+      - name: Save independent reference reading
+        if: steps.wind.outcome != 'success' && steps.backup.outcome == 'success'
         run: |
-          echo "::warning::風速取得に失敗しました。watch.txt は取得停止表示に更新し、30分以上の障害はIssueで通知します。"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add watch.txt index.html backup_wind.json
+          git diff --cached --quiet || git commit -m "Update reference wind from independent weather data"
+          git push
+
+      - name: Log acquisition failure (notification via 30-minute issue only)
+        if: steps.wind.outcome == 'failure'
+        run: |
+          echo "::notice::逗子マリーナの実測取得に失敗しました。参考風データとは別に障害を継続監視します。"
