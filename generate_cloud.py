@@ -112,8 +112,10 @@ def candidate_stream_urls(deno):
         "--no-playlist", "--socket-timeout", "20",
         "-g",
     ]
+    auth_variants = []
     if cookie_file and Path(cookie_file).is_file():
-        common.extend(["--cookies", cookie_file])
+        auth_variants.append(["--cookies", cookie_file])
+    auth_variants.append([])  # Anonymous retry if stored cookies are no longer accepted.
     # Live HLS (often itag 93) can give an unplayable manifest even when
     # yt-dlp succeeds. Prefer trying a different client/format next.
     strategies = [
@@ -126,21 +128,22 @@ def candidate_stream_urls(deno):
     seen = set()
     candidates = candidate_video_urls()
     for candidate in candidates:
-        for extractor_args, fmt in strategies:
-            if time.monotonic() >= deadline:
-                return
-            try:
-                out = run_text(common + [
-                    "--extractor-args", extractor_args, "-f", fmt, candidate
-                ], min(40, max(8, int(deadline - time.monotonic()))))
-                urls = [line.strip() for line in out.splitlines()
-                        if line.strip().startswith(("https://", "http://"))]
-                for url in urls:
-                    if url not in seen:
-                        seen.add(url)
-                        yield candidate, url
-            except Exception as exc:
-                print(f"YouTube別形式の取得失敗: {str(exc)[-180:]}", file=sys.stderr)
+        for auth_args in auth_variants:
+            for extractor_args, fmt in strategies:
+                if time.monotonic() >= deadline:
+                    return
+                try:
+                    out = run_text(common + auth_args + [
+                        "--extractor-args", extractor_args, "-f", fmt, candidate
+                    ], min(40, max(8, int(deadline - time.monotonic()))))
+                    urls = [line.strip() for line in out.splitlines()
+                            if line.strip().startswith(("https://", "http://"))]
+                    for url in urls:
+                        if url not in seen:
+                            seen.add(url)
+                            yield candidate, url
+                except Exception as exc:
+                    print(f"YouTube別形式の取得失敗: {str(exc)[-180:]}", file=sys.stderr)
     # Only for this video's ID found on Riviera's official page.
     for base in (
         "https://pipedapi.kavin.rocks",
