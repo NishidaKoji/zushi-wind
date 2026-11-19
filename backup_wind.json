@@ -3,9 +3,9 @@
   "kind": "measured_other_station",
   "station": "辻堂",
   "station_id": "46141",
-  "observed_at": "2026-11-19T09:30:00+09:00",
-  "ts": 1795048200,
-  "speed": 3.4,
+  "observed_at": "2026-11-19T09:40:00+09:00",
+  "ts": 1795048800,
+  "speed": 3.9,
   "direction": "南西",
   "period": "10分平均",
   "url": "https://www.jma.go.jp/bosai/amedas/"
